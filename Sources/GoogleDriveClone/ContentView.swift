@@ -1549,15 +1549,21 @@ private struct RunRow: View {
                     .foregroundStyle(.secondary)
             }
 
-            ScrollView {
-                Text(run.log.isEmpty ? "Waiting for rclone output..." : run.log)
-                    .font(.system(.caption, design: .monospaced))
-                    .textSelection(.enabled)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .padding(12)
+            DisclosureGroup {
+                ScrollView {
+                    Text(run.log.isEmpty ? "Waiting for rclone output..." : run.log)
+                        .font(.system(.caption, design: .monospaced))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(12)
+                }
+                .frame(minHeight: 120, maxHeight: 220)
+                .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
+            } label: {
+                Label("Raw rclone log", systemImage: "terminal")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
             }
-            .frame(minHeight: 140, maxHeight: 220)
-            .background(Color(nsColor: .textBackgroundColor), in: RoundedRectangle(cornerRadius: 6))
         }
         .padding(16)
         .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
