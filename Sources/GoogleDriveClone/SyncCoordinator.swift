@@ -9,6 +9,7 @@ final class SyncCoordinator: ObservableObject {
     @Published var statusMessage = "Ready"
     @Published var isRefreshing = false
     @Published var isRunning = false
+    @Published var isPaused = false
     @Published var isProfileEditorPresented = false
     @Published var isLoadingProfiles = false
     @Published var isSavingProfiles = false
@@ -26,12 +27,15 @@ final class SyncCoordinator: ObservableObject {
     @Published var selectedJobID: SyncJob.ID?
     @Published var runningJobID: SyncJob.ID?
     @Published var hasRunnableJob = false
+    @Published var interruptedRun: InterruptedRun?
 
     private let rclone = RcloneService()
     private let configStore = RcloneConfigStore()
     private let usageStore = UsageStore()
     private let jobStore = SyncJobStore()
     private let backupStore = BackupStore()
+    private let recoveryStore = RunRecoveryStore()
+    private let logStore = RunLogStore()
     private var runTask: Task<Void, Never>?
     private var activeProcessHandle: RcloneProcessHandle?
     private var shouldCancelRun = false
@@ -39,6 +43,7 @@ final class SyncCoordinator: ObservableObject {
     init() {
         refreshUsage()
         loadSavedJobs()
+        loadInterruptedRun()
     }
 
     func loadSavedJobs() {
@@ -52,6 +57,20 @@ final class SyncCoordinator: ObservableObject {
 
     var hasActiveJob: Bool {
         selectedJobID != nil
+    }
+
+    func loadInterruptedRun() {
+        Task {
+            let recovered = await recoveryStore.load()
+            await MainActor.run {
+                guard let recovered else { return }
+                interruptedRun = recovered
+                job = recovered.job
+                hasRunnableJob = true
+                selectedJobID = nil
+                statusMessage = "Resume available for '\(recovered.job.name)'."
+            }
+        }
     }
 
     func selectJob(_ savedJob: SyncJob) {
@@ -81,6 +100,10 @@ final class SyncCoordinator: ObservableObject {
         hasRunnableJob = true
         runningJobID = nil
         runs = []
+        interruptedRun = nil
+        Task {
+            await recoveryStore.clear()
+        }
         statusMessage = "Created a new unsaved sync job."
     }
 
@@ -472,12 +495,15 @@ final class SyncCoordinator: ObservableObject {
     }
 
     func resume() {
-        guard hasActiveJob, canResume else { return }
+        guard hasRunnableJob, canResume else { return }
         beginRun(status: "Resuming sync")
     }
 
     var canResume: Bool {
         guard !isRunning else { return false }
+        if interruptedRun != nil {
+            return true
+        }
         return runs.contains { run in
             switch run.state {
             case .cancelled, .failed:
@@ -500,11 +526,29 @@ final class SyncCoordinator: ObservableObject {
         shouldCancelRun = false
         runs = []
         isRunning = true
+        isPaused = false
         runningJobID = job.id
+        interruptedRun = InterruptedRun(job: job, startedAt: Date(), reason: status)
         statusMessage = "\(status) with \(selected.count) profiles..."
+
+        let recovery = interruptedRun
+        Task {
+            if let recovery {
+                await recoveryStore.save(recovery)
+            }
+        }
 
         runTask = Task {
             var completed = false
+            var logSession: RunLogSession?
+
+            do {
+                logSession = try await logStore.createSession(for: job)
+            } catch {
+                await MainActor.run {
+                    statusMessage = "Running without saved logs: \(error.localizedDescription)"
+                }
+            }
 
             for remote in selected {
                 if await MainActor.run(body: { shouldCancelRun }) {
@@ -513,14 +557,18 @@ final class SyncCoordinator: ObservableObject {
 
                 let usage = await usageStore.usage(for: remote.name)
                 let remaining = usage.remainingBytes
+                let logFileURL = logSession.map { session in
+                    logStore.logFileURL(for: remote.name, in: session)
+                }
 
                 if !job.dryRun, remaining <= 0 {
                     await MainActor.run {
                         runs.append(SyncRun(
                             remoteName: remote.name,
                             startedAt: Date(),
-                            state: .skipped(message: "Daily 750 GB capacity reached."),
-                            log: "Skipped \(remote.displayName): daily 750 GB capacity reached.\n",
+                            state: .skipped(message: "750 GB quota window reached."),
+                            log: "Skipped \(remote.displayName): 750 GB quota window reached.\n",
+                            logFilePath: nil,
                             transferredBytes: 0,
                             maxTransferBytes: remaining,
                             progress: nil
@@ -534,7 +582,8 @@ final class SyncCoordinator: ObservableObject {
                         remoteName: remote.name,
                         startedAt: Date(),
                         state: .running,
-                        log: "Starting \(remote.displayName) with \(job.dryRun ? "dry-run" : TransferStatsParser.formatBytes(remaining)) available today.\n",
+                        log: "Starting \(remote.displayName) with \(job.dryRun ? "dry-run" : TransferStatsParser.formatBytes(remaining)) available in the current quota window.\n",
+                        logFilePath: logFileURL?.path,
                         transferredBytes: 0,
                         maxTransferBytes: job.dryRun ? nil : remaining,
                         progress: nil
@@ -553,6 +602,7 @@ final class SyncCoordinator: ObservableObject {
                         remoteName: remote.name,
                         maxTransferBytes: job.dryRun ? nil : remaining
                         ,
+                        logFileURL: logFileURL,
                         processHandle: processHandle
                     ) { chunk in
                         Task { @MainActor in
@@ -582,21 +632,61 @@ final class SyncCoordinator: ObservableObject {
             }
 
             let cancelled = await MainActor.run(body: { shouldCancelRun })
+            let finalStatus = cancelled ? "Transfer cancelled." : (completed ? "Sync completed." : "Failover pool exhausted.")
             await MainActor.run {
                 activeProcessHandle = nil
                 runTask = nil
                 isRunning = false
+                isPaused = false
                 runningJobID = nil
-                statusMessage = cancelled ? "Transfer cancelled." : (completed ? "Sync completed." : "Failover pool exhausted.")
+                if completed {
+                    interruptedRun = nil
+                    Task {
+                        await recoveryStore.clear()
+                    }
+                } else {
+                    interruptedRun = InterruptedRun(job: job, startedAt: Date(), reason: cancelled ? "Cancelled" : "Incomplete")
+                    if let interruptedRun {
+                        Task {
+                            await recoveryStore.save(interruptedRun)
+                        }
+                    }
+                }
+                statusMessage = finalStatus
+                let finalRuns = runs
+                if let logSession {
+                    Task {
+                        try? await logStore.writeSummary(session: logSession, job: job, runs: finalRuns, finalStatus: finalStatus)
+                    }
+                }
             }
         }
     }
 
     func stop() {
+        pause()
+    }
+
+    func cancelJob() {
         guard isRunning else { return }
         shouldCancelRun = true
-        statusMessage = "Stopping current transfer..."
+        isPaused = false
+        statusMessage = "Cancelling current transfer..."
         activeProcessHandle?.terminate()
+    }
+
+    func pause() {
+        guard isRunning, !isPaused else { return }
+        activeProcessHandle?.pause()
+        isPaused = true
+        statusMessage = "Transfer paused. Keep SkyVault open to resume the active partial upload."
+    }
+
+    func continuePausedRun() {
+        guard isRunning, isPaused else { return }
+        activeProcessHandle?.resume()
+        isPaused = false
+        statusMessage = "Transfer resumed."
     }
 
     private func append(_ chunk: String, to remoteName: String) {

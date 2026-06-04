@@ -128,6 +128,17 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
     )
 }
 
+struct InterruptedRun: Hashable, Codable, Sendable {
+    var job: SyncJob
+    var startedAt: Date
+    var reason: String
+}
+
+struct RunLogSession: Hashable, Sendable {
+    var directoryPath: String
+    var summaryPath: String
+}
+
 enum RunState: Equatable, Sendable {
     case idle
     case running
@@ -154,6 +165,7 @@ struct SyncRun: Identifiable, Equatable, Sendable {
     let startedAt: Date
     var state: RunState
     var log: String
+    var logFilePath: String?
     var transferredBytes: Int64
     var maxTransferBytes: Int64?
     var progress: TransferProgress?

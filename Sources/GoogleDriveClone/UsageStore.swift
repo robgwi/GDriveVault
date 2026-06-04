@@ -2,18 +2,21 @@ import Foundation
 
 actor UsageStore {
     private let defaults = UserDefaults.standard
-    private let key = "skyvault.accountUsage.v1"
+    private let key = "skyvault.accountUsage.v2"
+    private let legacyKey = "skyvault.accountUsage.v1"
+    private let quotaWindow: TimeInterval = 24 * 60 * 60
 
     func load() -> [AccountUsage] {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([AccountUsage].self, from: data)
-        else {
-            return []
-        }
-
-        let today = Self.todayKey()
-        return decoded
-            .filter { $0.dateKey == today }
+        let events = loadEvents()
+        let grouped = Dictionary(grouping: events, by: \.remoteName)
+        return grouped
+            .map { remoteName, events in
+                AccountUsage(
+                    remoteName: remoteName,
+                    dateKey: Self.todayKey(),
+                    bytesTransferred: events.reduce(Int64(0)) { $0 + $1.bytes }
+                )
+            }
             .sorted { $0.remoteName.localizedCaseInsensitiveCompare($1.remoteName) == .orderedAscending }
     }
 
@@ -26,47 +29,66 @@ actor UsageStore {
     }
 
     func setTransferredBytes(_ bytes: Int64, for remoteName: String) {
-        var usages = load()
-        let today = Self.todayKey()
-
-        if let index = usages.firstIndex(where: { $0.remoteName == remoteName }) {
-            usages[index].dateKey = today
-            usages[index].bytesTransferred = max(usages[index].bytesTransferred, bytes)
-        } else {
-            usages.append(AccountUsage(remoteName: remoteName, dateKey: today, bytesTransferred: max(0, bytes)))
-        }
-
-        save(usages)
+        var events = loadEvents().filter { $0.remoteName != remoteName }
+        events.append(UsageEvent(remoteName: remoteName, date: Date(), bytes: max(0, bytes)))
+        saveEvents(events)
     }
 
     func addTransferredBytes(_ bytes: Int64, for remoteName: String) {
         guard bytes > 0 else { return }
-        var usages = load()
-        let today = Self.todayKey()
-
-        if let index = usages.firstIndex(where: { $0.remoteName == remoteName }) {
-            usages[index].dateKey = today
-            usages[index].bytesTransferred += bytes
-        } else {
-            usages.append(AccountUsage(remoteName: remoteName, dateKey: today, bytesTransferred: bytes))
-        }
-
-        save(usages)
+        var events = loadEvents()
+        events.append(UsageEvent(remoteName: remoteName, date: Date(), bytes: bytes))
+        saveEvents(events)
     }
 
     func reset(remoteName: String) {
-        var usages = load()
-        usages.removeAll { $0.remoteName == remoteName }
-        save(usages)
+        saveEvents(loadEvents().filter { $0.remoteName != remoteName })
     }
 
     func resetAll() {
-        save([])
+        saveEvents([])
     }
 
     func save(_ usages: [AccountUsage]) {
-        guard let data = try? JSONEncoder().encode(usages) else { return }
+        let events = usages
+            .filter { $0.bytesTransferred > 0 }
+            .map { UsageEvent(remoteName: $0.remoteName, date: Date(), bytes: $0.bytesTransferred) }
+        saveEvents(events)
+    }
+
+    private func loadEvents() -> [UsageEvent] {
+        if let data = defaults.data(forKey: key),
+           let decoded = try? JSONDecoder().decode([UsageEvent].self, from: data) {
+            return prune(decoded)
+        }
+
+        return migrateLegacyUsage()
+    }
+
+    private func saveEvents(_ events: [UsageEvent]) {
+        guard let data = try? JSONEncoder().encode(prune(events)) else { return }
         defaults.set(data, forKey: key)
+        defaults.synchronize()
+    }
+
+    private func prune(_ events: [UsageEvent]) -> [UsageEvent] {
+        let cutoff = Date().addingTimeInterval(-quotaWindow)
+        return events.filter { $0.date >= cutoff && $0.bytes > 0 }
+    }
+
+    private func migrateLegacyUsage() -> [UsageEvent] {
+        guard let data = defaults.data(forKey: legacyKey),
+              let decoded = try? JSONDecoder().decode([AccountUsage].self, from: data)
+        else {
+            return []
+        }
+
+        let today = Self.todayKey()
+        let events = decoded
+            .filter { $0.dateKey == today && $0.bytesTransferred > 0 }
+            .map { UsageEvent(remoteName: $0.remoteName, date: Date(), bytes: $0.bytesTransferred) }
+        saveEvents(events)
+        return events
     }
 
     static func todayKey() -> String {
@@ -76,4 +98,10 @@ actor UsageStore {
         formatter.dateFormat = "yyyy-MM-dd"
         return formatter.string(from: Date())
     }
+}
+
+private struct UsageEvent: Codable, Sendable {
+    var remoteName: String
+    var date: Date
+    var bytes: Int64
 }

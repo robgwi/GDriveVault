@@ -11,6 +11,9 @@ struct GoogleDriveCloneApp: App {
             ContentView()
                 .environmentObject(coordinator)
                 .frame(minWidth: 1040, minHeight: 680)
+                .onAppear {
+                    appDelegate.coordinator = coordinator
+                }
         }
         .windowResizability(.contentSize)
         .windowStyle(.titleBar)
@@ -22,6 +25,8 @@ struct GoogleDriveCloneApp: App {
 }
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
+    weak var coordinator: SyncCoordinator?
+
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApplication.shared.setActivationPolicy(.regular)
         setApplicationMenuTitle()
@@ -35,5 +40,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @MainActor
     private func setApplicationMenuTitle() {
         NSApplication.shared.mainMenu?.items.first?.title = "SkyVault for Google"
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard coordinator?.isRunning == true else {
+            return .terminateNow
+        }
+
+        let alert = NSAlert()
+        alert.messageText = "A sync is still active"
+        alert.informativeText = "Stop pauses the live rclone process only while SkyVault remains open. If you quit now, a later Resume can skip completed files, but any partially uploaded Google Drive file will restart."
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "Keep SkyVault Open")
+        alert.addButton(withTitle: "Quit Anyway")
+
+        return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow
     }
 }

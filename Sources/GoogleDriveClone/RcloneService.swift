@@ -1,4 +1,5 @@
 import Foundation
+import Darwin
 
 final class RcloneProcessHandle: @unchecked Sendable {
     private let lock = NSLock()
@@ -17,6 +18,24 @@ final class RcloneProcessHandle: @unchecked Sendable {
 
         if process?.isRunning == true {
             process?.terminate()
+        }
+    }
+
+    func pause() {
+        signal(SIGSTOP)
+    }
+
+    func resume() {
+        signal(SIGCONT)
+    }
+
+    private func signal(_ signal: Int32) {
+        lock.lock()
+        let process = self.process
+        lock.unlock()
+
+        if process?.isRunning == true {
+            Darwin.kill(process!.processIdentifier, signal)
         }
     }
 }
@@ -62,6 +81,7 @@ actor RcloneService {
         job: SyncJob,
         remoteName: String,
         maxTransferBytes: Int64?,
+        logFileURL: URL?,
         processHandle: RcloneProcessHandle?,
         onOutput: @escaping @Sendable (String) -> Void
     ) async throws -> Int32 {
@@ -88,6 +108,15 @@ actor RcloneService {
                 "\(maxTransferBytes)",
                 "--cutoff-mode",
                 "soft"
+            ])
+        }
+
+        if let logFileURL {
+            arguments.append(contentsOf: [
+                "--log-file",
+                logFileURL.path,
+                "--log-level",
+                "INFO"
             ])
         }
 

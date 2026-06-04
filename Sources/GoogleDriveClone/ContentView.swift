@@ -1,3 +1,4 @@
+import AppKit
 import SwiftUI
 
 private enum AppPage: String, CaseIterable, Identifiable {
@@ -259,19 +260,37 @@ struct ContentView: View {
             .controlSize(.large)
 
             if coordinator.isRunning {
-                Button(role: .destructive) {
-                    coordinator.stop()
-                } label: {
-                    Label("Stop", systemImage: "stop.fill")
+                if coordinator.isPaused {
+                    Button {
+                        coordinator.continuePausedRun()
+                    } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.large)
+                } else {
+                    Button {
+                        coordinator.stop()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.large)
                 }
-                .buttonStyle(.borderedProminent)
+
+                Button(role: .destructive) {
+                    coordinator.cancelJob()
+                } label: {
+                    Label("Cancel Job", systemImage: "xmark.circle.fill")
+                }
+                .buttonStyle(.bordered)
                 .controlSize(.large)
             } else {
                 if coordinator.canResume {
                     Button {
                         coordinator.resume()
                     } label: {
-                        Label("Resume", systemImage: "playpause.fill")
+                        Label("Restart Sync", systemImage: "playpause.fill")
                     }
                     .buttonStyle(.bordered)
                     .controlSize(.large)
@@ -418,7 +437,7 @@ struct ContentView: View {
                 Label("Account Tracker", systemImage: "gauge.with.dots.needle.50percent")
                     .font(.headline)
                 Spacer()
-                Text("750 GB daily cap per profile")
+                Text("750 GB per profile, last 24 hours")
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
                 Button {
@@ -431,7 +450,7 @@ struct ContentView: View {
             }
 
             if coordinator.accountUsages.isEmpty {
-                ContentUnavailableView("No accounts tracked", systemImage: "gauge", description: Text("Refresh profiles to start tracking daily transfer usage."))
+                ContentUnavailableView("No accounts tracked", systemImage: "gauge", description: Text("Refresh profiles to start tracking transfer usage."))
                     .frame(maxWidth: .infinity, minHeight: 120)
             } else {
                 LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
@@ -514,6 +533,7 @@ struct ContentView: View {
                             job: savedJob,
                             isSelected: coordinator.selectedJobID == savedJob.id,
                             isRunning: coordinator.runningJobID == savedJob.id,
+                            isPaused: coordinator.isPaused,
                             isAnyRunning: coordinator.isRunning,
                             onEdit: {
                                 coordinator.selectJob(savedJob)
@@ -521,8 +541,14 @@ struct ContentView: View {
                             onRun: {
                                 coordinator.runJob(savedJob)
                             },
-                            onStop: {
+                            onPause: {
                                 coordinator.stop()
+                            },
+                            onResume: {
+                                coordinator.continuePausedRun()
+                            },
+                            onStop: {
+                                coordinator.cancelJob()
                             }
                         )
                     }
@@ -708,12 +734,32 @@ struct ContentView: View {
     private var noJobSelected: some View {
         VStack(alignment: .leading, spacing: 14) {
             if coordinator.runs.isEmpty {
-                ContentUnavailableView(
-                    "No sync profile selected",
-                    systemImage: "tray.full",
-                    description: Text("Choose a saved sync profile above or click New to create one.")
-                )
-                .frame(maxWidth: .infinity, minHeight: 260)
+                if let interruptedRun = coordinator.interruptedRun {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Label("Restart Available", systemImage: "playpause.circle")
+                            .font(.headline)
+                            .foregroundStyle(.orange)
+                        Text(interruptedRun.job.name)
+                            .font(.title3.weight(.semibold))
+                        Text("SkyVault saved this interrupted run. Restart reruns the same sync profile so rclone can skip completed files. A partial Google Drive upload from a closed app starts that file again.")
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                        Button {
+                            coordinator.resume()
+                        } label: {
+                            Label("Restart Sync", systemImage: "playpause.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    }
+                    .frame(maxWidth: .infinity, minHeight: 220, alignment: .leading)
+                } else {
+                    ContentUnavailableView(
+                        "No sync profile selected",
+                        systemImage: "tray.full",
+                        description: Text("Choose a saved sync profile above or click New to create one.")
+                    )
+                    .frame(maxWidth: .infinity, minHeight: 260)
+                }
             } else {
                 HStack {
                     Label(coordinator.isRunning ? "Running Sync Profile" : "Last Sync Status", systemImage: coordinator.isRunning ? "arrow.triangle.2.circlepath" : "clock")
@@ -783,7 +829,7 @@ struct ContentView: View {
                                 Text(remote.displayName)
                                     .font(.callout.weight(.medium))
                                     .lineLimit(1)
-                                Text(TransferStatsParser.formatBytes(coordinator.usage(for: remote.name).remainingBytes) + " left today")
+                                Text(TransferStatsParser.formatBytes(coordinator.usage(for: remote.name).remainingBytes) + " left in window")
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
                             }
@@ -796,7 +842,7 @@ struct ContentView: View {
                 }
             }
 
-            Text("Selected profiles form the failover pool, so SkyVault can continue with the next account when a profile reaches its daily upload limit.")
+            Text("Selected profiles form the failover pool, so SkyVault can continue with the next account when a profile reaches its 750 GB quota window.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -881,9 +927,12 @@ private struct SavedJobRow: View {
     let job: SyncJob
     let isSelected: Bool
     let isRunning: Bool
+    let isPaused: Bool
     let isAnyRunning: Bool
     let onEdit: () -> Void
     let onRun: () -> Void
+    let onPause: () -> Void
+    let onResume: () -> Void
     let onStop: () -> Void
 
     var body: some View {
@@ -932,12 +981,28 @@ private struct SavedJobRow: View {
             .disabled(isAnyRunning)
 
             if isRunning {
+                if isPaused {
+                    Button {
+                        onResume()
+                    } label: {
+                        Label("Resume", systemImage: "play.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                } else {
+                    Button {
+                        onPause()
+                    } label: {
+                        Label("Stop", systemImage: "stop.fill")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
                 Button(role: .destructive) {
                     onStop()
                 } label: {
-                    Label("Stop", systemImage: "stop.fill")
+                    Label("Cancel Job", systemImage: "xmark.circle.fill")
                 }
-                .buttonStyle(.borderedProminent)
+                .buttonStyle(.bordered)
             } else {
                 Button {
                     onRun()
@@ -1544,9 +1609,30 @@ private struct RunRow: View {
             }
 
             if isResumableState {
-                Label("Resume reruns this sync job; rclone compares the destination and skips files already completed.", systemImage: "playpause")
+                Label("Resume reruns this sync job and skips completed files. Cancelled partial Google Drive files restart from the beginning.", systemImage: "playpause")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            if let logFilePath = run.logFilePath {
+                HStack(spacing: 10) {
+                    Label("Saved log", systemImage: "doc.text.magnifyingglass")
+                        .font(.caption.weight(.semibold))
+                    Text(logFilePath)
+                        .font(.caption.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: logFilePath)])
+                    } label: {
+                        Label("Reveal", systemImage: "folder")
+                    }
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+                }
             }
 
             DisclosureGroup {
