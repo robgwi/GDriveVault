@@ -2,12 +2,13 @@ import Foundation
 
 actor SyncJobStore {
     private let defaults = UserDefaults.standard
-    private let key = "skyvault.syncJobs.v1"
+    private let key = "gdrivevault.syncJobs.v1"
+    private let legacyKey = "skyvault.syncJobs.v1"
 
     func load() -> [SyncJob] {
-        guard let data = defaults.data(forKey: key),
-              let decoded = try? JSONDecoder().decode([SyncJob].self, from: data)
-        else {
+        let data = PreferenceMigration.data(forKey: key, legacyKeys: [legacyKey], defaults: defaults)
+        guard let data,
+              let decoded = try? JSONDecoder().decode([SyncJob].self, from: data) else {
             return []
         }
 

@@ -2,8 +2,10 @@ import Foundation
 
 actor UsageStore {
     private let defaults = UserDefaults.standard
-    private let key = "skyvault.accountUsage.v2"
-    private let legacyKey = "skyvault.accountUsage.v1"
+    private let key = "gdrivevault.accountUsage.v2"
+    private let legacyKey = "gdrivevault.accountUsage.v1"
+    private let skyVaultKey = "skyvault.accountUsage.v2"
+    private let skyVaultLegacyKey = "skyvault.accountUsage.v1"
     private let quotaWindow: TimeInterval = 24 * 60 * 60
 
     func load() -> [AccountUsage] {
@@ -57,7 +59,7 @@ actor UsageStore {
     }
 
     private func loadEvents() -> [UsageEvent] {
-        if let data = defaults.data(forKey: key),
+        if let data = PreferenceMigration.data(forKey: key, legacyKeys: [skyVaultKey], defaults: defaults),
            let decoded = try? JSONDecoder().decode([UsageEvent].self, from: data) {
             return prune(decoded)
         }
@@ -77,7 +79,8 @@ actor UsageStore {
     }
 
     private func migrateLegacyUsage() -> [UsageEvent] {
-        guard let data = defaults.data(forKey: legacyKey),
+        let data = PreferenceMigration.data(forKey: legacyKey, legacyKeys: [skyVaultLegacyKey], defaults: defaults)
+        guard let data,
               let decoded = try? JSONDecoder().decode([AccountUsage].self, from: data)
         else {
             return []

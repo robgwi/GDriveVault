@@ -23,7 +23,7 @@ actor RunLogStore {
 
     func writeSummary(session: RunLogSession, job: SyncJob, runs: [SyncRun], finalStatus: String) throws {
         let lines = [
-            "SkyVault for Google Sync Summary",
+            "GDriveVault Sync Summary",
             "Started: \(Self.displayFormatter.string(from: runs.map(\.startedAt).min() ?? Date()))",
             "Finished: \(Self.displayFormatter.string(from: Date()))",
             "Status: \(finalStatus)",
@@ -52,7 +52,7 @@ actor RunLogStore {
             create: true
         )
         let root = support
-            .appendingPathComponent("SkyVault for Google", isDirectory: true)
+            .appendingPathComponent("GDriveVault", isDirectory: true)
             .appendingPathComponent("Run Logs", isDirectory: true)
         try fileManager.createDirectory(at: root, withIntermediateDirectories: true)
         return root

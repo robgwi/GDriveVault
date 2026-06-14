@@ -33,13 +33,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         DispatchQueue.main.async {
             self.setApplicationMenuTitle()
-            NSApplication.shared.windows.first?.title = "SkyVault for Google"
+            NSApplication.shared.windows.first?.title = "GDriveVault"
         }
     }
 
     @MainActor
     private func setApplicationMenuTitle() {
-        NSApplication.shared.mainMenu?.items.first?.title = "SkyVault for Google"
+        NSApplication.shared.mainMenu?.items.first?.title = "GDriveVault"
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -49,9 +49,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
         let alert = NSAlert()
         alert.messageText = "A sync is still active"
-        alert.informativeText = "Stop pauses the live rclone process only while SkyVault remains open. If you quit now, a later Resume can skip completed files, but any partially uploaded Google Drive file will restart."
+        alert.informativeText = "Stop pauses the live rclone process only while GDriveVault remains open. If you quit now, a later Resume can skip completed files, but any partially uploaded Google Drive file will restart."
         alert.alertStyle = .warning
-        alert.addButton(withTitle: "Keep SkyVault Open")
+        alert.addButton(withTitle: "Keep GDriveVault Open")
         alert.addButton(withTitle: "Quit Anyway")
 
         return alert.runModal() == .alertFirstButtonReturn ? .terminateCancel : .terminateNow

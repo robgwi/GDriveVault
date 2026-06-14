@@ -44,6 +44,20 @@ struct RemoteFolder: Identifiable, Hashable, Sendable {
     let path: String
 }
 
+struct DroppedUploadItem: Identifiable, Hashable, Sendable {
+    let id = UUID()
+    var url: URL
+    var isDirectory: Bool
+
+    var name: String {
+        url.lastPathComponent
+    }
+
+    var path: String {
+        url.path
+    }
+}
+
 struct AccountUsage: Identifiable, Hashable, Codable, Sendable {
     static let dailyLimitBytes: Int64 = 750_000_000_000
 
@@ -98,7 +112,7 @@ enum SyncMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .sync:
             "Mirror can delete remote files. Run dry first before using it live."
         case .bisync:
-            "Two-way sync is stateful and needs extra care if either side changed outside SkyVault."
+            "Two-way sync is stateful and needs extra care if either side changed outside GDriveVault."
         }
     }
 
@@ -110,21 +124,25 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
     var name: String
     var localPath: String
     var remotePath: String
+    var remoteRootName: String?
     var mode: SyncMode
     var selectedRemoteNames: Set<String>
     var transfers: Int
     var checkers: Int
     var dryRun: Bool
+    var cleanupLocalPathAfterRun: String?
 
     static let sample = SyncJob(
         name: "Workspace upload",
         localPath: NSHomeDirectory(),
         remotePath: "Backups/Mac",
+        remoteRootName: "MrHandPay",
         mode: .copy,
         selectedRemoteNames: [],
         transfers: 12,
         checkers: 16,
-        dryRun: true
+        dryRun: true,
+        cleanupLocalPathAfterRun: nil
     )
 }
 
@@ -199,4 +217,232 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
     var percent: Int?
     var sizeBytes: Int64?
     var speedBytesPerSecond: Int64?
+}
+
+enum AppVersion {
+    static let current = "1.1.0"
+}
+
+struct UpdateNotification: Identifiable, Equatable {
+    let id = UUID()
+    var title: String
+    var message: String
+    var actionTitle: String?
+    var actionURL: URL?
+}
+
+struct GoogleChatSettings: Codable, Equatable, Sendable {
+    var webhookURL: String
+    var notifyStarted: Bool
+    var notifyCompleted: Bool
+    var notifyFailed: Bool
+    var notifyCompletedFiles: Bool
+    var fileBatchSize: Int
+
+    var isConfigured: Bool {
+        URL(string: webhookURL.trimmingCharacters(in: .whitespacesAndNewlines)) != nil
+    }
+
+    static let disabled = GoogleChatSettings(
+        webhookURL: "",
+        notifyStarted: true,
+        notifyCompleted: true,
+        notifyFailed: true,
+        notifyCompletedFiles: false,
+        fileBatchSize: 10
+    )
+}
+
+struct RemoteControlSettings: Codable, Equatable, Sendable {
+    static let productionServerURL = "https://app.gdrivevault.com"
+
+    var serverURL: String
+    var deviceName: String
+    var licenseKey: String
+    var approvalRequestID: String?
+    var deviceID: String?
+    var token: String?
+    var isEnabled: Bool
+    var pollIntervalSeconds: Int
+
+    enum CodingKeys: String, CodingKey {
+        case serverURL
+        case deviceName
+        case licenseKey
+        case approvalRequestID
+        case deviceID
+        case token
+        case isEnabled
+        case pollIntervalSeconds
+    }
+
+    init(
+        serverURL: String,
+        deviceName: String,
+        licenseKey: String,
+        approvalRequestID: String?,
+        deviceID: String?,
+        token: String?,
+        isEnabled: Bool,
+        pollIntervalSeconds: Int
+    ) {
+        self.serverURL = serverURL
+        self.deviceName = deviceName
+        self.licenseKey = licenseKey
+        self.approvalRequestID = approvalRequestID
+        self.deviceID = deviceID
+        self.token = token
+        self.isEnabled = isEnabled
+        self.pollIntervalSeconds = pollIntervalSeconds
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        serverURL = try container.decodeIfPresent(String.self, forKey: .serverURL) ?? Self.productionServerURL
+        deviceName = try container.decodeIfPresent(String.self, forKey: .deviceName) ?? (Host.current().localizedName ?? "GDriveVault Mac")
+        licenseKey = try container.decodeIfPresent(String.self, forKey: .licenseKey) ?? ""
+        approvalRequestID = try container.decodeIfPresent(String.self, forKey: .approvalRequestID)
+        deviceID = try container.decodeIfPresent(String.self, forKey: .deviceID)
+        token = try container.decodeIfPresent(String.self, forKey: .token)
+        isEnabled = true
+        pollIntervalSeconds = try container.decodeIfPresent(Int.self, forKey: .pollIntervalSeconds) ?? 5
+    }
+
+    var isRegistered: Bool {
+        deviceID != nil && token != nil && hasLicenseKey
+    }
+
+    var hasLicenseKey: Bool {
+        !licenseKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var isPendingApproval: Bool {
+        approvalRequestID?.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false && !isRegistered
+    }
+
+    var normalizedServerURL: String {
+        Self.productionServerURL
+    }
+
+    var lockedToProductionServer: RemoteControlSettings {
+        var updated = self
+        let previousURL = serverURL.trimmingCharacters(in: CharacterSet(charactersIn: "/").union(.whitespacesAndNewlines))
+        if previousURL != Self.productionServerURL {
+            updated.deviceID = nil
+            updated.token = nil
+            updated.approvalRequestID = nil
+        }
+        updated.serverURL = Self.productionServerURL
+        updated.licenseKey = updated.licenseKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        updated.isEnabled = true
+        return updated
+    }
+
+    static let disabled = RemoteControlSettings(
+        serverURL: productionServerURL,
+        deviceName: Host.current().localizedName ?? "GDriveVault Mac",
+        licenseKey: "",
+        approvalRequestID: nil,
+        deviceID: nil,
+        token: nil,
+        isEnabled: true,
+        pollIntervalSeconds: 5
+    )
+}
+
+struct RemoteControlCommand: Decodable, Sendable {
+    var id: String
+    var command: String
+    var payload: [String: String]?
+}
+
+struct RemoteControlHeartbeat: Encodable, Sendable {
+    var status: String
+    var jobName: String?
+    var remoteName: String?
+    var transferredBytes: Int64
+    var speedBps: Int64?
+    var eta: String?
+    var accountUsage: [String: Int64]
+    var appVersion: String
+    var hostname: String?
+    var platform: String
+    var osVersion: String
+    var arch: String
+    var syncRoot: String?
+    var currentFile: String?
+    var filesCompleted: Int?
+    var filesTotal: Int?
+    var filesAdded: Int
+    var filesUpdated: Int
+    var filesDeleted: Int
+    var bytesAdded: Int64
+    var bytesUpdated: Int64
+    var recentChanges: [RemoteControlChange]
+    var internetDownloadMbps: Double?
+    var speedTestedAt: Date?
+    var error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case jobName = "job_name"
+        case remoteName = "remote_name"
+        case transferredBytes = "transferred_bytes"
+        case speedBps = "speed_bps"
+        case eta
+        case accountUsage = "account_usage"
+        case appVersion = "app_version"
+        case hostname
+        case platform
+        case osVersion = "os_version"
+        case arch
+        case syncRoot = "sync_root"
+        case currentFile = "current_file"
+        case filesCompleted = "files_completed"
+        case filesTotal = "files_total"
+        case filesAdded = "files_added"
+        case filesUpdated = "files_updated"
+        case filesDeleted = "files_deleted"
+        case bytesAdded = "bytes_added"
+        case bytesUpdated = "bytes_updated"
+        case recentChanges = "recent_changes"
+        case internetDownloadMbps = "internet_download_mbps"
+        case speedTestedAt = "speed_tested_at"
+        case error
+    }
+}
+
+struct RemoteControlChange: Encodable, Hashable, Sendable {
+    var action: String
+    var path: String
+    var bytes: Int64?
+    var remoteName: String
+    var timestamp: Date
+
+    enum CodingKeys: String, CodingKey {
+        case action
+        case path
+        case bytes
+        case remoteName = "remote_name"
+        case timestamp
+    }
+}
+
+struct BandwidthTestResult: Codable, Equatable, Sendable {
+    var testedAt: Date
+    var downloadMbps: Double
+    var bytesDownloaded: Int64
+    var durationSeconds: Double
+    var endpoint: String
+
+    var displaySpeed: String {
+        "\(String(format: "%.1f", downloadMbps)) Mbps"
+    }
+
+    var displayTime: String {
+        let formatter = DateFormatter()
+        formatter.timeStyle = .short
+        formatter.dateStyle = .short
+        return formatter.string(from: testedAt)
+    }
 }

@@ -3,12 +3,12 @@
 import PackageDescription
 
 let package = Package(
-    name: "SkyVaultForGoogle",
+    name: "GDriveVault",
     platforms: [
         .macOS(.v14)
     ],
     products: [
-        .executable(name: "SkyVaultForGoogle", targets: ["GoogleDriveClone"])
+        .executable(name: "GDriveVault", targets: ["GoogleDriveClone"])
     ],
     targets: [
         .executableTarget(

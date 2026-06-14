@@ -1,5 +1,25 @@
 import AppKit
+import Darwin
 import SwiftUI
+import UniformTypeIdentifiers
+
+private final class DroppedURLCollector: @unchecked Sendable {
+    private var urls: [URL] = []
+    private let lock = NSLock()
+
+    func append(_ url: URL) {
+        lock.lock()
+        urls.append(url)
+        lock.unlock()
+    }
+
+    func snapshot() -> [URL] {
+        lock.lock()
+        let result = urls
+        lock.unlock()
+        return result
+    }
+}
 
 private enum AppPage: String, CaseIterable, Identifiable {
     case dashboard
@@ -33,9 +53,17 @@ private enum AppPage: String, CaseIterable, Identifiable {
     }
 }
 
+private enum ControlConnectionState {
+    case connected
+    case connecting
+    case disabled
+    case error
+}
+
 struct ContentView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
     @State private var selectedPage: AppPage = .dashboard
+    @State private var isSettingsPresented = false
 
     var body: some View {
         NavigationSplitView {
@@ -64,10 +92,29 @@ struct ContentView: View {
             }
             .background(Color(nsColor: .windowBackgroundColor))
         }
-        .navigationTitle("SkyVault for Google")
+        .navigationTitle("GDriveVault")
         .task {
             if coordinator.remotes.isEmpty {
                 coordinator.refreshRemotes()
+            }
+            coordinator.checkForUpdates(showUpToDate: false)
+        }
+        .alert(item: $coordinator.updateNotification) { notification in
+            if let actionTitle = notification.actionTitle, let actionURL = notification.actionURL {
+                Alert(
+                    title: Text(notification.title),
+                    message: Text(notification.message),
+                    primaryButton: .default(Text(actionTitle)) {
+                        NSWorkspace.shared.open(actionURL)
+                    },
+                    secondaryButton: .cancel()
+                )
+            } else {
+                Alert(
+                    title: Text(notification.title),
+                    message: Text(notification.message),
+                    dismissButton: .default(Text("OK"))
+                )
             }
         }
         .sheet(isPresented: $coordinator.isProfileEditorPresented) {
@@ -77,6 +124,21 @@ struct ContentView: View {
         }
         .sheet(isPresented: $coordinator.isRemoteBrowserPresented) {
             RemoteBrowserView()
+                .environmentObject(coordinator)
+                .frame(minWidth: 760, minHeight: 560)
+        }
+        .sheet(isPresented: $coordinator.isChatSettingsPresented) {
+            GoogleChatSettingsView()
+                .environmentObject(coordinator)
+                .frame(minWidth: 680, minHeight: 520)
+        }
+        .sheet(isPresented: $coordinator.isRemoteControlSettingsPresented) {
+            RemoteControlSettingsView()
+                .environmentObject(coordinator)
+                .frame(minWidth: 680, minHeight: 540)
+        }
+        .sheet(isPresented: $isSettingsPresented) {
+            AppSettingsView(selectedPage: $selectedPage, isPresented: $isSettingsPresented)
                 .environmentObject(coordinator)
                 .frame(minWidth: 760, minHeight: 560)
         }
@@ -92,7 +154,7 @@ struct ContentView: View {
                     .background(Color.blue.opacity(0.14), in: RoundedRectangle(cornerRadius: 8))
 
                 VStack(alignment: .leading, spacing: 2) {
-                    Text("SkyVault")
+                    Text("GDriveVault")
                         .font(.headline)
                     Text("for Google")
                         .font(.caption)
@@ -205,9 +267,9 @@ struct ContentView: View {
             .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
 
             Button {
-                coordinator.openProfileEditor()
+                isSettingsPresented = true
             } label: {
-                Label("Manage Profiles", systemImage: "externaldrive.badge.gearshape")
+                Label("Settings", systemImage: "gearshape")
                     .frame(maxWidth: .infinity)
             }
             .buttonStyle(.bordered)
@@ -238,26 +300,30 @@ struct ContentView: View {
             Spacer()
 
             Button {
-                coordinator.backupSettings()
+                coordinator.openRemoteControlSettings()
             } label: {
-                Label("Backup", systemImage: "archivebox")
+                Label(controlConnectionLabel, systemImage: controlConnectionIcon)
+            }
+            .labelStyle(.iconOnly)
+            .buttonStyle(.bordered)
+            .controlSize(.large)
+            .tint(controlConnectionTint)
+            .help("\(controlConnectionLabel): \(coordinator.remoteControlStatus)")
+
+            Button {
+                isSettingsPresented = true
+            } label: {
+                Label("Settings", systemImage: "gearshape")
             }
             .controlSize(.large)
 
             Button {
-                coordinator.restoreSettings()
+                coordinator.checkForUpdates(showUpToDate: true)
             } label: {
-                Label("Restore", systemImage: "arrow.counterclockwise.circle")
+                Label("Updates", systemImage: "arrow.down.circle")
             }
             .controlSize(.large)
-            .disabled(coordinator.isRunning)
-
-            Button {
-                coordinator.openProfileEditor()
-            } label: {
-                Label("Profiles", systemImage: "slider.horizontal.3")
-            }
-            .controlSize(.large)
+            .disabled(coordinator.isCheckingForUpdates)
 
             if coordinator.isRunning {
                 if coordinator.isPaused {
@@ -296,17 +362,36 @@ struct ContentView: View {
                     .controlSize(.large)
                 }
                 Button {
-                    coordinator.start()
+                    handleToolbarStart()
                 } label: {
                     Label("Start", systemImage: "play.fill")
                 }
                 .buttonStyle(.borderedProminent)
                 .controlSize(.large)
-                .disabled(!coordinator.hasRunnableJob)
+                .disabled(coordinator.requiresRegistration || coordinator.isRunningBandwidthTest || (coordinator.savedJobs.isEmpty && !coordinator.hasRunnableJob))
             }
         }
         .padding(.horizontal, 24)
         .padding(.vertical, 16)
+    }
+
+    private func handleToolbarStart() {
+        if coordinator.hasRunnableJob {
+            coordinator.start()
+            return
+        }
+
+        if coordinator.savedJobs.count == 1, let onlyJob = coordinator.savedJobs.first {
+            coordinator.runJob(onlyJob)
+            return
+        }
+
+        selectedPage = .syncSettings
+        if coordinator.savedJobs.isEmpty {
+            coordinator.statusMessage = "Create and save a sync profile before starting."
+        } else {
+            coordinator.statusMessage = "Choose a sync profile to run."
+        }
     }
 
     @ViewBuilder
@@ -315,7 +400,9 @@ struct ContentView: View {
         case .dashboard:
             VStack(alignment: .leading, spacing: 20) {
                 hero
+                dropUploadPanel
                 quickStats
+                bandwidthPanel
                 liveTransferPanel
                 accountTracker
             }
@@ -347,7 +434,7 @@ struct ContentView: View {
 
     private var hero: some View {
         ZStack(alignment: .leading) {
-            Image("skyvault-hero", bundle: .module)
+            Image("gdrivevault-hero", bundle: .module)
                 .resizable()
                 .scaledToFill()
                 .frame(height: 220)
@@ -368,7 +455,7 @@ struct ContentView: View {
                     Image(systemName: "cloud.fill")
                         .font(.title2)
                         .foregroundStyle(.blue)
-                    Text("SkyVault for Google")
+                    Text("GDriveVault")
                         .font(.largeTitle.weight(.semibold))
                 }
 
@@ -398,7 +485,198 @@ struct ContentView: View {
             StatTile(title: "Profiles", value: "\(coordinator.remotes.count)", icon: "person.2.wave.2", tint: .blue)
             StatTile(title: "Selected", value: "\(coordinator.job.selectedRemoteNames.count)", icon: "checkmark.circle", tint: .green)
             StatTile(title: "Pool Left", value: TransferStatsParser.formatBytes(selectedRemainingBytes), icon: "gauge.with.dots.needle.67percent", tint: .cyan)
+            StatTile(title: "Internet", value: bandwidthSpeedText, icon: "network", tint: .purple)
             StatTile(title: "Live", value: liveTransferredText, icon: coordinator.isRunning ? "arrow.up.forward.circle.fill" : "pause.circle", tint: coordinator.isRunning ? .green : .orange)
+            StatTile(title: "Control", value: controlConnectionShortLabel, icon: controlConnectionIcon, tint: controlConnectionTint)
+        }
+    }
+
+    private var controlConnectionLabel: String {
+        switch controlConnectionState {
+        case .connected: "Control connected"
+        case .connecting: "Control connecting"
+        case .disabled: "Control off"
+        case .error: "Control error"
+        }
+    }
+
+    private var controlConnectionShortLabel: String {
+        switch controlConnectionState {
+        case .connected: "Connected"
+        case .connecting: "Connecting"
+        case .disabled: "Off"
+        case .error: "Error"
+        }
+    }
+
+    private var controlConnectionIcon: String {
+        switch controlConnectionState {
+        case .connected: "checkmark.icloud.fill"
+        case .connecting: "arrow.triangle.2.circlepath.icloud"
+        case .disabled: "icloud.slash"
+        case .error: "exclamationmark.icloud.fill"
+        }
+    }
+
+    private var controlConnectionTint: Color {
+        switch controlConnectionState {
+        case .connected: .green
+        case .connecting: .blue
+        case .disabled: .secondary
+        case .error: .red
+        }
+    }
+
+    private var controlConnectionState: ControlConnectionState {
+        if coordinator.isRegisteringRemoteControl || coordinator.isTestingRemoteControl {
+            return .connecting
+        }
+        if coordinator.isLicenseLocked {
+            return .error
+        }
+        let status = coordinator.remoteControlStatus.lowercased()
+        if status.contains("error") || status.contains("failed") || status.contains("invalid") || status.contains("rejected") {
+            return .error
+        }
+        if coordinator.remoteControlSettings.isRegistered,
+           status.contains("connected") || status.contains("ready") || status.contains("waiting") || status.contains("processed") || status.contains("registered") {
+            return .connected
+        }
+        return .connecting
+    }
+
+    private var dropUploadPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Quick Upload", systemImage: "tray.and.arrow.up.fill")
+                    .font(.headline)
+                Spacer()
+                Text(dropUploadDestinationText)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            VStack(spacing: 12) {
+                Image(systemName: "square.and.arrow.up.on.square")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.blue)
+                Text("Drop files or folders here")
+                    .font(.title3.weight(.semibold))
+                Text("GDriveVault will upload them to \(dropUploadDestinationText). Multiple dropped items are staged into a temporary batch and removed after the run.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .multilineTextAlignment(.center)
+                    .frame(maxWidth: 620)
+            }
+            .frame(maxWidth: .infinity, minHeight: 150)
+            .padding(18)
+            .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8)
+                    .stroke(style: StrokeStyle(lineWidth: 1.5, dash: [7, 6]))
+                    .foregroundStyle(Color.blue.opacity(0.36))
+            }
+            .onDrop(of: [.fileURL], isTargeted: nil) { providers in
+                handleDroppedProviders(providers)
+            }
+
+            if !coordinator.droppedUploadItems.isEmpty {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(coordinator.droppedUploadItems) { item in
+                        HStack(spacing: 10) {
+                            Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
+                                .foregroundStyle(item.isDirectory ? .blue : .secondary)
+                                .frame(width: 20)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(item.name)
+                                    .font(.callout.weight(.medium))
+                                    .lineLimit(1)
+                                Text(item.path)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                    .lineLimit(1)
+                                    .truncationMode(.middle)
+                            }
+                            Spacer()
+                        }
+                    }
+                }
+                .padding(12)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            HStack {
+                Toggle("Stage files before upload", isOn: $coordinator.stageDroppedUploads)
+                    .toggleStyle(.checkbox)
+                    .disabled(coordinator.droppedUploadItems.count > 1)
+                Text(coordinator.droppedUploadItems.count > 1 ? "Required for multiple dropped items." : "Safer for long uploads if the source may move.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    coordinator.clearDroppedUploads()
+                } label: {
+                    Label("Clear", systemImage: "xmark.circle")
+                }
+                .disabled(coordinator.droppedUploadItems.isEmpty || coordinator.isRunning || coordinator.isPreparingDroppedUpload)
+
+                Button {
+                    coordinator.uploadDroppedItems()
+                } label: {
+                    if coordinator.isPreparingDroppedUpload {
+                        Label("Preparing", systemImage: "hourglass")
+                    } else {
+                        Label("Upload", systemImage: "play.fill")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(coordinator.requiresRegistration || coordinator.droppedUploadItems.isEmpty || coordinator.isRunning || coordinator.isRunningBandwidthTest || coordinator.isPreparingDroppedUpload)
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+
+    private var bandwidthPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Connection Check", systemImage: "network")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    coordinator.runBandwidthTest()
+                } label: {
+                    if coordinator.isRunningBandwidthTest {
+                        Label("Testing", systemImage: "hourglass")
+                    } else {
+                        Label("Test Now", systemImage: "speedometer")
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(coordinator.isRunningBandwidthTest || coordinator.isRunning)
+            }
+
+            HStack(spacing: 16) {
+                LiveMetric(title: "Download", value: bandwidthSpeedText, icon: "arrow.down.circle")
+                LiveMetric(title: "Sample", value: bandwidthSampleText, icon: "externaldrive")
+                LiveMetric(title: "Last tested", value: coordinator.latestBandwidthTest?.displayTime ?? "Not tested", icon: "clock")
+            }
+
+            Text("GDriveVault runs this download check before starting sync, copy, mirror, or restart jobs.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
         }
     }
 
@@ -476,6 +754,45 @@ struct ContentView: View {
         }
     }
 
+    private var dropUploadDestinationText: String {
+        let baseJob = coordinator.hasRunnableJob ? coordinator.job : (coordinator.savedJobs.count == 1 ? coordinator.savedJobs[0] : coordinator.job)
+        let rootName = baseJob.remoteRootName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = rootName?.isEmpty == false ? rootName! : "MrHandPay"
+        let path = baseJob.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path.isEmpty ? root : "\(root)/\(path)"
+    }
+
+    private func handleDroppedProviders(_ providers: [NSItemProvider]) -> Bool {
+        let collector = DroppedURLCollector()
+        let group = DispatchGroup()
+
+        for provider in providers where provider.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) {
+            group.enter()
+            provider.loadItem(forTypeIdentifier: UTType.fileURL.identifier, options: nil) { item, _ in
+                defer { group.leave() }
+                let droppedURL: URL?
+                if let data = item as? Data,
+                   let url = URL(dataRepresentation: data, relativeTo: nil) {
+                    droppedURL = url
+                } else if let url = item as? URL {
+                    droppedURL = url
+                } else {
+                    droppedURL = nil
+                }
+
+                if let droppedURL {
+                    collector.append(droppedURL)
+                }
+            }
+        }
+
+        group.notify(queue: .main) {
+            coordinator.addDroppedUploadURLs(collector.snapshot())
+        }
+
+        return true
+    }
+
     private var activeRun: SyncRun? {
         coordinator.runs.last(where: { run in
             if case .running = run.state {
@@ -487,6 +804,18 @@ struct ContentView: View {
 
     private var liveTransferredText: String {
         TransferStatsParser.formatBytes(activeRun?.progress?.transferredBytes ?? activeRun?.transferredBytes ?? coordinator.runs.reduce(Int64(0)) { $0 + $1.transferredBytes })
+    }
+
+    private var bandwidthSpeedText: String {
+        if coordinator.isRunningBandwidthTest {
+            return "Testing"
+        }
+        return coordinator.latestBandwidthTest?.displaySpeed ?? "No test"
+    }
+
+    private var bandwidthSampleText: String {
+        guard let result = coordinator.latestBandwidthTest else { return "-" }
+        return TransferStatsParser.formatBytes(result.bytesDownloaded)
     }
 
     private var liveCapText: String {
@@ -630,6 +959,16 @@ struct ContentView: View {
                 }
 
                 GridRow {
+                    Text("Shared Drive")
+                        .foregroundStyle(.secondary)
+                    TextField("Shared Drive or root folder name", text: Binding(
+                        get: { coordinator.job.remoteRootName ?? "" },
+                        set: { coordinator.job.remoteRootName = $0 }
+                    ))
+                    .textFieldStyle(.roundedBorder)
+                }
+
+                GridRow {
                     Text("Remote path")
                         .foregroundStyle(.secondary)
                     HStack {
@@ -741,7 +1080,7 @@ struct ContentView: View {
                             .foregroundStyle(.orange)
                         Text(interruptedRun.job.name)
                             .font(.title3.weight(.semibold))
-                        Text("SkyVault saved this interrupted run. Restart reruns the same sync profile so rclone can skip completed files. A partial Google Drive upload from a closed app starts that file again.")
+                        Text("GDriveVault saved this interrupted run. Restart reruns the same sync profile so rclone can skip completed files. A partial Google Drive upload from a closed app starts that file again.")
                             .font(.callout)
                             .foregroundStyle(.secondary)
                         Button {
@@ -791,9 +1130,10 @@ struct ContentView: View {
     }
 
     private var destinationPreview: String {
-        let remote = coordinator.firstSelectedRemoteName() ?? coordinator.remotes.first?.name ?? "profile:"
+        let rootName = coordinator.job.remoteRootName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = rootName?.isEmpty == false ? rootName! : "MrHandPay"
         let path = coordinator.job.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-        return path.isEmpty ? "\(remote) root" : "\(remote)\(path)"
+        return path.isEmpty ? root : "\(root)/\(path)"
     }
 
     private var profileSelector: some View {
@@ -842,7 +1182,7 @@ struct ContentView: View {
                 }
             }
 
-            Text("Selected profiles form the failover pool, so SkyVault can continue with the next account when a profile reaches its 750 GB quota window.")
+            Text("Selected profiles form the failover pool, so GDriveVault can continue with the next account when a profile reaches its 750 GB quota window.")
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
@@ -963,7 +1303,7 @@ private struct SavedJobRow: View {
 
             VStack(alignment: .leading, spacing: 4) {
                 Label(job.localPath, systemImage: "folder")
-                Label(job.remotePath.isEmpty ? "Remote root" : job.remotePath, systemImage: "cloud")
+                Label(displayDestination, systemImage: "cloud")
             }
             .font(.caption)
             .foregroundStyle(.secondary)
@@ -1032,6 +1372,13 @@ private struct SavedJobRow: View {
         if isRunning { return "arrow.triangle.2.circlepath" }
         if isSelected { return "checkmark.circle.fill" }
         return "circle"
+    }
+
+    private var displayDestination: String {
+        let rootName = job.remoteRootName?.trimmingCharacters(in: .whitespacesAndNewlines)
+        let root = rootName?.isEmpty == false ? rootName! : "MrHandPay"
+        let path = job.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path.isEmpty ? root : "\(root)/\(path)"
     }
 
     private var statusColor: Color {
@@ -1144,6 +1491,219 @@ private struct AccountUsageTile: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke((usage.isAtCapacity ? Color.orange : Color.primary).opacity(0.10))
         }
+    }
+}
+
+private struct AppSettingsView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+    @Binding var selectedPage: AppPage
+    @Binding var isPresented: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "gearshape.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 44, height: 44)
+                    .background(Color.blue.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Settings")
+                        .font(.title2.weight(.semibold))
+                    Text("GDriveVault configuration")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+
+                Button {
+                    isPresented = false
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 18) {
+                    SettingsGroup(title: "Sync") {
+                        SettingsActionRow(
+                            icon: "slider.horizontal.3",
+                            title: "Sync Settings",
+                            subtitle: "Saved sync profiles and job setup"
+                        ) {
+                            selectedPage = .syncSettings
+                            isPresented = false
+                        }
+                    }
+
+                    SettingsGroup(title: "Rclone") {
+                        SettingsActionRow(
+                            icon: "externaldrive.badge.gearshape",
+                            title: "Rclone Profile Settings",
+                            subtitle: coordinator.configPath.isEmpty ? "Profile editor" : coordinator.configPath
+                        ) {
+                            closeThen {
+                                coordinator.openProfileEditor()
+                            }
+                        }
+
+                        SettingsActionRow(
+                            icon: "square.and.arrow.down",
+                            title: "Import Rclone Profiles",
+                            subtitle: "Import another rclone config file"
+                        ) {
+                            closeThen {
+                                coordinator.openProfileImporter()
+                            }
+                        }
+                    }
+
+                    SettingsGroup(title: "Backup") {
+                        SettingsActionRow(
+                            icon: "archivebox",
+                            title: "Backup Settings",
+                            subtitle: "Export profiles, sync jobs, usage, and integrations",
+                            isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
+                        ) {
+                            closeThen {
+                                coordinator.backupSettings()
+                            }
+                        }
+
+                        SettingsActionRow(
+                            icon: "icloud.and.arrow.up",
+                            title: coordinator.isUploadingSettingsBackup ? "Uploading Backup" : "Push Backup to Control Server",
+                            subtitle: coordinator.remoteControlSettings.isRegistered ? "Store app settings and rclone profiles remotely" : "Register Remote Control first",
+                            isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup || !coordinator.remoteControlSettings.isRegistered
+                        ) {
+                            closeThen {
+                                coordinator.uploadSettingsBackupToControlServer()
+                            }
+                        }
+
+                        SettingsActionRow(
+                            icon: "arrow.counterclockwise.circle",
+                            title: "Restore Settings",
+                            subtitle: "Import a GDriveVault backup",
+                            isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
+                        ) {
+                            closeThen {
+                                coordinator.restoreSettings()
+                            }
+                        }
+                    }
+
+                    SettingsGroup(title: "Integrations") {
+                        SettingsActionRow(
+                            icon: "antenna.radiowaves.left.and.right",
+                            title: "Remote Control",
+                            subtitle: coordinator.remoteControlSettings.isRegistered ? coordinator.remoteControlStatus : "Pair this Mac with GDriveVault Control"
+                        ) {
+                            closeThen {
+                                coordinator.openRemoteControlSettings()
+                            }
+                        }
+
+                        SettingsActionRow(
+                            icon: "message.badge",
+                            title: "Google Chat Spaces",
+                            subtitle: coordinator.googleChatSettings.isConfigured ? "Connected" : "Not configured"
+                        ) {
+                            closeThen {
+                                coordinator.openGoogleChatSettings()
+                            }
+                        }
+
+                        SettingsActionRow(
+                            icon: "arrow.down.circle",
+                            title: "Check for Updates",
+                            subtitle: "Current version \(AppVersion.current)",
+                            isDisabled: coordinator.isCheckingForUpdates
+                        ) {
+                            coordinator.checkForUpdates(showUpToDate: true)
+                        }
+                    }
+                }
+                .padding(20)
+            }
+        }
+    }
+
+    private func closeThen(_ action: @escaping () -> Void) {
+        isPresented = false
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+            action()
+        }
+    }
+}
+
+private struct SettingsGroup<Content: View>: View {
+    let title: String
+    @ViewBuilder var content: Content
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text(title)
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
+                .textCase(.uppercase)
+
+            VStack(spacing: 8) {
+                content
+            }
+        }
+    }
+}
+
+private struct SettingsActionRow: View {
+    let icon: String
+    let title: String
+    let subtitle: String
+    var isDisabled = false
+    let action: () -> Void
+
+    var body: some View {
+        Button {
+            action()
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: icon)
+                    .font(.title3)
+                    .foregroundStyle(isDisabled ? Color.secondary : Color.blue)
+                    .frame(width: 36, height: 36)
+                    .background((isDisabled ? Color.primary : Color.blue).opacity(0.08), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(title)
+                        .font(.callout.weight(.semibold))
+                        .foregroundStyle(.primary)
+                    Text(subtitle)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Image(systemName: "chevron.right")
+                    .font(.caption.weight(.bold))
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(12)
+            .contentShape(Rectangle())
+            .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+        }
+        .buttonStyle(.plain)
+        .disabled(isDisabled)
+        .opacity(isDisabled ? 0.55 : 1)
     }
 }
 
@@ -1291,7 +1851,7 @@ private struct ProfileEditorView: View {
         VStack(spacing: 0) {
             HStack(spacing: 12) {
                 VStack(alignment: .leading, spacing: 3) {
-                    Text("SkyVault Profiles")
+                    Text("GDriveVault Profiles")
                         .font(.title2.weight(.semibold))
                     Text(coordinator.configPath.isEmpty ? "Loading config file..." : coordinator.configPath)
                         .font(.callout)
@@ -1389,6 +1949,273 @@ private struct ProfileEditorView: View {
             ConfigWizardView()
                 .environmentObject(coordinator)
                 .frame(minWidth: 820, minHeight: 620)
+        }
+    }
+}
+
+private struct GoogleChatSettingsView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: "message.badge.filled.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 44, height: 44)
+                    .background(Color.blue.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Google Chat Space")
+                        .font(.title2.weight(.semibold))
+                    Text("Post sync updates to a team Space using an incoming webhook.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            Form {
+                Section {
+                    SecureField("Google Chat webhook URL", text: $coordinator.googleChatSettings.webhookURL)
+                        .textFieldStyle(.roundedBorder)
+                    Text("Create an incoming webhook in the target Space, then paste its URL here.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Space Webhook")
+                }
+
+                Section {
+                    Toggle("Notify when a sync starts", isOn: $coordinator.googleChatSettings.notifyStarted)
+                    Toggle("Notify when a sync completes", isOn: $coordinator.googleChatSettings.notifyCompleted)
+                    Toggle("Notify when a sync fails, cancels, or exhausts the failover pool", isOn: $coordinator.googleChatSettings.notifyFailed)
+                    Toggle("Batch completed-file updates", isOn: $coordinator.googleChatSettings.notifyCompletedFiles)
+
+                    Stepper(
+                        "Send file batches every \(coordinator.googleChatSettings.fileBatchSize) files",
+                        value: $coordinator.googleChatSettings.fileBatchSize,
+                        in: 1...50
+                    )
+                    .disabled(!coordinator.googleChatSettings.notifyCompletedFiles)
+
+                    Text("GDriveVault sends throttled progress updates automatically. Completed-file batches depend on rclone emitting copied-file log lines and keep the Space readable.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Notifications")
+                }
+            }
+            .formStyle(.grouped)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            HStack {
+                Text(coordinator.googleChatSettings.isConfigured ? "Google Chat notifications are configured." : "Notifications are disabled until a webhook URL is saved.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+
+                Spacer()
+
+                Button("Cancel") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button {
+                    coordinator.testGoogleChat()
+                } label: {
+                    if coordinator.isTestingGoogleChat {
+                        Label("Testing", systemImage: "hourglass")
+                    } else {
+                        Label("Test", systemImage: "paperplane")
+                    }
+                }
+                .disabled(coordinator.isTestingGoogleChat || !coordinator.googleChatSettings.isConfigured)
+
+                Button {
+                    coordinator.saveGoogleChatSettings()
+                } label: {
+                    Label("Save", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+        }
+    }
+}
+
+private struct RemoteControlSettingsView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: coordinator.requiresRegistration ? "key.fill" : "antenna.radiowaves.left.and.right")
+                    .font(.title2)
+                    .foregroundStyle(coordinator.requiresRegistration ? .orange : .blue)
+                    .frame(width: 44, height: 44)
+                    .background((coordinator.requiresRegistration ? Color.orange : Color.blue).opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(coordinator.requiresRegistration ? "GDriveVault License" : "Remote Control")
+                        .font(.title2.weight(.semibold))
+                    Text(coordinator.requiresRegistration ? "Activate this Mac before GDriveVault can be used." : "Pair this Mac with GDriveVault Control for status and commands.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            Form {
+                Section {
+                    HStack {
+                        Text("Server URL")
+                        Spacer()
+                        Text(RemoteControlSettings.productionServerURL)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                    TextField("Device name", text: $coordinator.remoteControlSettings.deviceName)
+                        .textFieldStyle(.roundedBorder)
+                    SecureField("License key", text: $coordinator.remoteControlSettings.licenseKey)
+                        .textFieldStyle(.roundedBorder)
+
+                    Stepper(
+                        "Poll every \(coordinator.remoteControlSettings.pollIntervalSeconds) seconds",
+                        value: $coordinator.remoteControlSettings.pollIntervalSeconds,
+                        in: 2...60
+                    )
+                } header: {
+                    Text("License")
+                }
+
+                Section {
+                    if coordinator.requiresRegistration {
+                        Label("GDriveVault is disabled until this Mac is registered with a valid license key.", systemImage: "lock.trianglebadge.exclamationmark")
+                            .foregroundStyle(coordinator.isLicenseLocked ? .red : .orange)
+                    }
+                    Label("Remote control is always enabled for licensed agents.", systemImage: "antenna.radiowaves.left.and.right")
+                        .foregroundStyle(.secondary)
+
+                    HStack {
+                        Label(coordinator.remoteControlSettings.isRegistered ? "Registered" : "Not registered", systemImage: coordinator.remoteControlSettings.isRegistered ? "checkmark.seal.fill" : "exclamationmark.triangle")
+                            .foregroundStyle(coordinator.remoteControlSettings.isRegistered ? .green : .orange)
+                        Spacer()
+                        if let deviceID = coordinator.remoteControlSettings.deviceID {
+                            Text(deviceID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+                    if let approvalRequestID = coordinator.remoteControlSettings.approvalRequestID, !approvalRequestID.isEmpty {
+                        HStack {
+                            Label("Waiting for approval", systemImage: "person.badge.clock")
+                                .foregroundStyle(.orange)
+                            Spacer()
+                            Text(approvalRequestID)
+                                .font(.caption.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                        }
+                    }
+
+                    Text(coordinator.remoteControlStatus)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } header: {
+                    Text("Activation")
+                }
+
+                if coordinator.remoteControlSettings.isRegistered {
+                    Section {
+                        Text("Supported commands: start_current, start_job, stop, resume, cancel_job, refresh_remotes, and check_updates.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    } header: {
+                        Text("Commands")
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            Divider()
+
+            HStack {
+                Spacer()
+
+                Button(coordinator.requiresRegistration ? "Quit" : "Cancel") {
+                    if coordinator.requiresRegistration {
+                        quitUnregisteredApplication()
+                    } else {
+                        dismiss()
+                    }
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Button {
+                    coordinator.registerRemoteControlDevice()
+                } label: {
+                    if coordinator.isRegisteringRemoteControl && !coordinator.isAutomaticRemoteRegistration {
+                        Label("Registering", systemImage: "hourglass")
+                    } else if coordinator.remoteControlSettings.isPendingApproval {
+                        Label(coordinator.isAutomaticRemoteRegistration ? "Waiting for Approval" : "Check Approval", systemImage: "person.badge.clock")
+                    } else if !coordinator.remoteControlSettings.hasLicenseKey {
+                        Label("Request Approval", systemImage: "person.badge.plus")
+                    } else {
+                        Label("Register", systemImage: "link")
+                    }
+                }
+                .disabled(
+                    coordinator.isRegisteringRemoteControl ||
+                    coordinator.remoteControlSettings.serverURL.isEmpty ||
+                    coordinator.remoteControlSettings.deviceName.isEmpty
+                )
+
+                if coordinator.remoteControlSettings.isRegistered {
+                    Button {
+                        coordinator.testRemoteControlConnection()
+                    } label: {
+                        if coordinator.isTestingRemoteControl {
+                            Label("Testing", systemImage: "hourglass")
+                        } else {
+                            Label("Test", systemImage: "network")
+                        }
+                    }
+                    .disabled(coordinator.isTestingRemoteControl)
+
+                    Button {
+                        coordinator.saveRemoteControlSettings()
+                    } label: {
+                        Label("Save", systemImage: "checkmark")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+            }
+            .padding(20)
+        }
+    }
+
+    private func quitUnregisteredApplication() {
+        NSApplication.shared.terminate(nil)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+            Darwin.exit(0)
         }
     }
 }

@@ -2,11 +2,14 @@ import Foundation
 
 actor RunRecoveryStore {
     private let defaults = UserDefaults.standard
-    private let key = "skyvault.interruptedRun.v1"
+    private let key = "gdrivevault.interruptedRun.v1"
+    private let legacyKey = "skyvault.interruptedRun.v1"
 
     func load() -> InterruptedRun? {
-        guard let data = defaults.data(forKey: key) else { return nil }
-        return try? JSONDecoder().decode(InterruptedRun.self, from: data)
+        let data = PreferenceMigration.data(forKey: key, legacyKeys: [legacyKey], defaults: defaults)
+        guard let data,
+              let decoded = try? JSONDecoder().decode(InterruptedRun.self, from: data) else { return nil }
+        return decoded
     }
 
     func save(_ interruptedRun: InterruptedRun) {
