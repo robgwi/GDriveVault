@@ -2,4 +2,5 @@
 .swiftpm/
 DerivedData/
 *.xcuserdata/
-dist/
+dist/*
+!dist/*.zip
