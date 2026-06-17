@@ -17,15 +17,16 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ZIP_PATH="$DIST_DIR/$APP_NAME-mac-arm64-$VERSION.zip"
+ICON_SOURCE="$ROOT_DIR/Sources/GoogleDriveClone/Resources/Images/gdrivevault-app-icon.png"
+ICONSET_DIR="$DIST_DIR/$APP_NAME.iconset"
+ICON_PATH="$RESOURCES_DIR/$APP_NAME.icns"
 
 strip_signing_xattrs() {
   local path="$1"
   xattr -cr "$path" 2>/dev/null || true
-  while IFS= read -r item; do
-    xattr -d com.apple.FinderInfo "$item" 2>/dev/null || true
-    xattr -d "com.apple.fileprovider.fpfs#P" "$item" 2>/dev/null || true
-    xattr -d com.apple.ResourceFork "$item" 2>/dev/null || true
-  done < <(find "$path" -print)
+  find "$path" -print0 | xargs -0 xattr -d com.apple.FinderInfo 2>/dev/null || true
+  find "$path" -print0 | xargs -0 xattr -d "com.apple.fileprovider.fpfs#P" 2>/dev/null || true
+  find "$path" -print0 | xargs -0 xattr -d com.apple.ResourceFork 2>/dev/null || true
 }
 
 echo "Building $APP_NAME ($CONFIGURATION)..."
@@ -48,12 +49,32 @@ if [[ ! -d "$RESOURCE_BUNDLE_PATH" ]]; then
   exit 1
 fi
 
+if [[ ! -f "$ICON_SOURCE" ]]; then
+  echo "Missing app icon source: $ICON_SOURCE" >&2
+  exit 1
+fi
+
 echo "Creating app bundle..."
-rm -rf "$APP_DIR" "$ZIP_PATH"
+rm -rf "$APP_DIR" "$ZIP_PATH" "$ICONSET_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
 cp -R "$RESOURCE_BUNDLE_PATH" "$RESOURCES_DIR/"
+
+echo "Creating app icon..."
+mkdir -p "$ICONSET_DIR"
+sips -z 16 16 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_16x16.png" >/dev/null
+sips -z 32 32 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_16x16@2x.png" >/dev/null
+sips -z 32 32 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_32x32.png" >/dev/null
+sips -z 64 64 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_32x32@2x.png" >/dev/null
+sips -z 128 128 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_128x128.png" >/dev/null
+sips -z 256 256 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_128x128@2x.png" >/dev/null
+sips -z 256 256 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_256x256.png" >/dev/null
+sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_256x256@2x.png" >/dev/null
+sips -z 512 512 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_512x512.png" >/dev/null
+sips -z 1024 1024 "$ICON_SOURCE" --out "$ICONSET_DIR/icon_512x512@2x.png" >/dev/null
+iconutil -c icns "$ICONSET_DIR" -o "$ICON_PATH"
+rm -rf "$ICONSET_DIR"
 
 cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 <?xml version="1.0" encoding="UTF-8"?>
@@ -72,6 +93,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
   <string>$APP_NAME</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
+  <key>CFBundleIconFile</key>
+  <string>$APP_NAME</string>
   <key>CFBundleShortVersionString</key>
   <string>$VERSION</string>
   <key>CFBundleVersion</key>
