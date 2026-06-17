@@ -434,7 +434,7 @@ struct ContentView: View {
 
     private var hero: some View {
         ZStack(alignment: .leading) {
-            Image("gdrivevault-hero", bundle: .module)
+            Image("gdrivevault-hero", bundle: .gdriveVaultResources)
                 .resizable()
                 .scaledToFill()
                 .frame(height: 220)

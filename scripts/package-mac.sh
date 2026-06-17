@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="GDriveVault"
 BUNDLE_ID="com.gdrivevault.agent"
 MIN_MACOS="14.0"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.1.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 CONFIGURATION="${CONFIGURATION:-release}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
@@ -17,6 +17,16 @@ CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ZIP_PATH="$DIST_DIR/$APP_NAME-mac-arm64-$VERSION.zip"
+
+strip_signing_xattrs() {
+  local path="$1"
+  xattr -cr "$path" 2>/dev/null || true
+  while IFS= read -r item; do
+    xattr -d com.apple.FinderInfo "$item" 2>/dev/null || true
+    xattr -d "com.apple.fileprovider.fpfs#P" "$item" 2>/dev/null || true
+    xattr -d com.apple.ResourceFork "$item" 2>/dev/null || true
+  done < <(find "$path" -print)
+}
 
 echo "Building $APP_NAME ($CONFIGURATION)..."
 cd "$ROOT_DIR"
@@ -76,6 +86,8 @@ cat > "$CONTENTS_DIR/Info.plist" <<PLIST
 </plist>
 PLIST
 
+strip_signing_xattrs "$APP_DIR"
+
 echo "Signing app with identity: $SIGN_IDENTITY"
 codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
 
@@ -83,7 +95,7 @@ echo "Verifying signature..."
 codesign --verify --deep --strict "$APP_DIR"
 
 echo "Creating installer zip..."
-ditto -c -k --keepParent "$APP_DIR" "$ZIP_PATH"
+ditto -c -k --norsrc --keepParent "$APP_DIR" "$ZIP_PATH"
 
 echo
 echo "Packaged app:"
