@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="GDriveVault"
 BUNDLE_ID="com.gdrivevault.agent"
 MIN_MACOS="14.0"
-VERSION="${VERSION:-1.1.0}"
+VERSION="${VERSION:-1.2.0}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 CONFIGURATION="${CONFIGURATION:-release}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"

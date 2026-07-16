@@ -85,10 +85,12 @@ actor RcloneService {
         processHandle: RcloneProcessHandle?,
         onOutput: @escaping @Sendable (String) -> Void
     ) async throws -> Int32 {
-        let destination = "\(remoteName)\(job.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/")))"
+        let remotePath = "\(remoteName)\(job.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/")))"
+        let source = job.direction == .download ? remotePath : job.localPath
+        let destination = job.direction == .download ? job.localPath : remotePath
         var arguments = [
             job.mode.rcloneCommand,
-            job.localPath,
+            source,
             destination,
             "--progress",
             "--stats",

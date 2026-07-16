@@ -11,9 +11,10 @@ private enum GoogleChatEvent {
             let destinationLines = destinations.map { "• \($0)" }.joined(separator: "\n")
             return """
             GDriveVault started: \(job.name)
+            Direction: \(job.direction.label)
             Mode: \(job.mode.label)\(job.dryRun ? " (dry run)" : "")
-            Local: \(job.localPath)
-            Destinations:
+            \(job.direction == .download ? "Local destination" : "Local source"): \(job.localPath)
+            \(job.direction == .download ? "Drive sources" : "Drive destinations"):
             \(destinationLines)
             """
         case .finished(let job, let status, let runSummaries):
@@ -22,7 +23,7 @@ private enum GoogleChatEvent {
             return """
             GDriveVault finished: \(job.name)
             Status: \(status)
-            Destination: \(teamDestinationPath(for: job))
+            \(job.direction == .download ? "Drive source" : "Drive destination"): \(teamDestinationPath(for: job))
             \(runLines)
             """
         }
@@ -1788,6 +1789,7 @@ final class SyncCoordinator: ObservableObject {
         var uploadJob = baseJob
         uploadJob.id = UUID()
         uploadJob.mode = .copy
+        uploadJob.direction = .upload
         uploadJob.name = "Dropped upload"
         uploadJob.dryRun = false
         uploadJob.cleanupLocalPathAfterRun = nil

@@ -2,7 +2,7 @@
 
 GDriveVault is a native SwiftUI macOS app for moving large Google Drive datasets with `rclone`. It coordinates multiple Google Drive remotes as a failover pool, tracks each account against Google's 750 GB/day transfer window, and reports status to GDriveVault Control.
 
-The app is designed for a simple operator workflow: configure one or more sync profiles, choose the destination folder, then run saved jobs or drag files/folders onto the Dashboard for quick upload.
+The app is designed for a simple operator workflow: configure one or more sync profiles, choose the local and Drive folders, then run saved jobs or drag files/folders onto the Dashboard for quick upload.
 
 ## Repository
 
@@ -57,7 +57,7 @@ The script creates:
 
 ```text
 dist/GDriveVault.app
-dist/GDriveVault-mac-arm64-1.1.0.zip
+dist/GDriveVault-mac-arm64-1.2.0.zip
 ```
 
 Set a release version when packaging:
@@ -68,7 +68,7 @@ VERSION=1.0.1 BUILD_NUMBER=2 ./scripts/package-mac.sh
 
 To install on another Mac:
 
-1. Copy `dist/GDriveVault-mac-arm64-1.1.0.zip` to the target Mac.
+1. Copy `dist/GDriveVault-mac-arm64-1.2.0.zip` to the target Mac.
 2. Unzip it.
 3. Drag `GDriveVault.app` into `/Applications`.
 4. Install `rclone` with Homebrew.
@@ -81,7 +81,7 @@ The packaged app is ad-hoc signed by default. For external distribution, sign wi
 The script accepts environment variables:
 
 ```text
-VERSION=1.1.0
+VERSION=1.2.0
 BUILD_NUMBER=1
 CONFIGURATION=release
 SIGN_IDENTITY=-
@@ -130,13 +130,16 @@ Common config path:
 A sync profile stores:
 
 - Local source folder
-- Remote destination path
+- Remote Drive path
+- Transfer direction, upload or download
 - Selected `rclone` profiles/remotes
 - Transfer mode
 - Worker/checker counts
 - Dry-run setting
 
 Selected profiles form the failover pool. If one profile reaches its remaining transfer limit or exits before completion, GDriveVault can continue with the next selected profile.
+
+Upload jobs run from the local folder to the Drive path. Download jobs reverse the same job and run from the Drive path to the local folder while still using the selected profile pool.
 
 ## Quick Upload
 
@@ -158,7 +161,7 @@ GDriveVault defaults new jobs to dry-run mode. Turn dry-run off only after confi
 
 ## Usage Tracking
 
-Google Drive accounts have a practical 750 GB/day upload limit. GDriveVault tracks bytes reported by `rclone` for each profile in a rolling 24-hour window and applies each profile's remaining allowance with `rclone --max-transfer`.
+Google Drive accounts have practical per-account transfer limits. GDriveVault tracks bytes reported by `rclone` for each profile in a rolling 24-hour window and applies each profile's remaining allowance with `rclone --max-transfer`.
 
 You can reset usage in the app if the local estimate differs from the real account state.
 
@@ -169,7 +172,7 @@ You can reset usage in the app if the local estimate differs from the real accou
 - Restart Sync reruns the same job after an interruption so `rclone` can skip completed files.
 - Cancel Job terminates the current process and halts failover.
 
-If the app is closed during a transfer, a later restart can skip completed files, but a partially uploaded Google Drive file may restart from the beginning.
+If the app is closed during a transfer or a network error interrupts the process, a later restart reruns the same job with the same direction and selected profile pool. `rclone` compares source and destination and skips files that already completed. A partially written file may restart depending on the backend and file state.
 
 ## Logs
 

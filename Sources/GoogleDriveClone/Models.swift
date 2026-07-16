@@ -97,9 +97,9 @@ enum SyncMode: String, CaseIterable, Identifiable, Codable, Sendable {
     var description: String {
         switch self {
         case .copy:
-            "Uploads new and changed files to the remote path, but does not delete files that already exist there."
+            "Copies new and changed files from the source to the destination, but does not delete files that already exist there."
         case .sync:
-            "Makes the remote path match the local folder. Files removed locally can also be deleted remotely."
+            "Makes the destination match the source. Files removed from the source can also be deleted from the destination."
         case .bisync:
             "Performs a two-way sync between local and remote. Use after both sides are already in a known good state."
         }
@@ -110,7 +110,7 @@ enum SyncMode: String, CaseIterable, Identifiable, Codable, Sendable {
         case .copy:
             nil
         case .sync:
-            "Mirror can delete remote files. Run dry first before using it live."
+            "Mirror can delete destination files. Run dry first before using it live."
         case .bisync:
             "Two-way sync is stateful and needs extra care if either side changed outside GDriveVault."
         }
@@ -119,12 +119,50 @@ enum SyncMode: String, CaseIterable, Identifiable, Codable, Sendable {
     var rcloneCommand: String { rawValue }
 }
 
+enum TransferDirection: String, CaseIterable, Identifiable, Codable, Sendable {
+    case upload
+    case download
+
+    var id: String { rawValue }
+
+    var label: String {
+        switch self {
+        case .upload: "Upload"
+        case .download: "Download"
+        }
+    }
+
+    var description: String {
+        switch self {
+        case .upload:
+            "Moves files from the local folder to the selected Google Drive path."
+        case .download:
+            "Moves files from the selected Google Drive path down to the local folder."
+        }
+    }
+
+    var sourceLabel: String {
+        switch self {
+        case .upload: "Local source"
+        case .download: "Drive source"
+        }
+    }
+
+    var destinationLabel: String {
+        switch self {
+        case .upload: "Drive destination"
+        case .download: "Local destination"
+        }
+    }
+}
+
 struct SyncJob: Identifiable, Hashable, Codable, Sendable {
     var id = UUID()
     var name: String
     var localPath: String
     var remotePath: String
     var remoteRootName: String?
+    var direction: TransferDirection
     var mode: SyncMode
     var selectedRemoteNames: Set<String>
     var transfers: Int
@@ -137,6 +175,7 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
         localPath: NSHomeDirectory(),
         remotePath: "Backups/Mac",
         remoteRootName: "MrHandPay",
+        direction: .upload,
         mode: .copy,
         selectedRemoteNames: [],
         transfers: 12,
@@ -144,6 +183,65 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
         dryRun: true,
         cleanupLocalPathAfterRun: nil
     )
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case name
+        case localPath
+        case remotePath
+        case remoteRootName
+        case direction
+        case mode
+        case selectedRemoteNames
+        case transfers
+        case checkers
+        case dryRun
+        case cleanupLocalPathAfterRun
+    }
+
+    init(
+        id: UUID = UUID(),
+        name: String,
+        localPath: String,
+        remotePath: String,
+        remoteRootName: String?,
+        direction: TransferDirection = .upload,
+        mode: SyncMode,
+        selectedRemoteNames: Set<String>,
+        transfers: Int,
+        checkers: Int,
+        dryRun: Bool,
+        cleanupLocalPathAfterRun: String?
+    ) {
+        self.id = id
+        self.name = name
+        self.localPath = localPath
+        self.remotePath = remotePath
+        self.remoteRootName = remoteRootName
+        self.direction = direction
+        self.mode = mode
+        self.selectedRemoteNames = selectedRemoteNames
+        self.transfers = transfers
+        self.checkers = checkers
+        self.dryRun = dryRun
+        self.cleanupLocalPathAfterRun = cleanupLocalPathAfterRun
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try container.decodeIfPresent(UUID.self, forKey: .id) ?? UUID()
+        name = try container.decode(String.self, forKey: .name)
+        localPath = try container.decode(String.self, forKey: .localPath)
+        remotePath = try container.decode(String.self, forKey: .remotePath)
+        remoteRootName = try container.decodeIfPresent(String.self, forKey: .remoteRootName)
+        direction = try container.decodeIfPresent(TransferDirection.self, forKey: .direction) ?? .upload
+        mode = try container.decode(SyncMode.self, forKey: .mode)
+        selectedRemoteNames = try container.decode(Set<String>.self, forKey: .selectedRemoteNames)
+        transfers = try container.decode(Int.self, forKey: .transfers)
+        checkers = try container.decode(Int.self, forKey: .checkers)
+        dryRun = try container.decode(Bool.self, forKey: .dryRun)
+        cleanupLocalPathAfterRun = try container.decodeIfPresent(String.self, forKey: .cleanupLocalPathAfterRun)
+    }
 }
 
 struct InterruptedRun: Hashable, Codable, Sendable {
@@ -220,7 +318,7 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
 }
 
 enum AppVersion {
-    static let current = "1.1.0"
+    static let current = "1.2.0"
 }
 
 struct UpdateNotification: Identifiable, Equatable {

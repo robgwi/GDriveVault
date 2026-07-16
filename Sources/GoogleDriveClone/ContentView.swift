@@ -944,7 +944,25 @@ struct ContentView: View {
                 }
 
                 GridRow {
-                    Text("Local folder")
+                    Text("Direction")
+                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Direction", selection: $coordinator.job.direction) {
+                            ForEach(TransferDirection.allCases) { direction in
+                                Text(direction.label).tag(direction)
+                            }
+                        }
+                        .pickerStyle(.segmented)
+                        .frame(maxWidth: 260)
+
+                        Text(coordinator.job.direction.description)
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
+                GridRow {
+                    Text(coordinator.job.direction == .download ? "Local destination" : "Local source")
                         .foregroundStyle(.secondary)
                     HStack {
                         TextField("Local folder", text: $coordinator.job.localPath)
@@ -969,7 +987,7 @@ struct ContentView: View {
                 }
 
                 GridRow {
-                    Text("Remote path")
+                    Text(coordinator.job.direction == .download ? "Drive source" : "Drive destination")
                         .foregroundStyle(.secondary)
                     HStack {
                         VStack(alignment: .leading, spacing: 4) {
@@ -1292,6 +1310,7 @@ private struct SavedJobRow: View {
                     .lineLimit(1)
                     .truncationMode(.middle)
                 HStack(spacing: 10) {
+                    Label(job.direction.label, systemImage: job.direction == .download ? "arrow.down.circle" : "arrow.up.circle")
                     Label(job.mode.label, systemImage: "switch.2")
                     Label("\(job.selectedRemoteNames.count)", systemImage: "person.2")
                     Label(job.dryRun ? "Dry" : "Live", systemImage: job.dryRun ? "eye" : "bolt.fill")
