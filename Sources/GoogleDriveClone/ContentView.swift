@@ -2138,8 +2138,9 @@ private struct FullDiskAccessGuideView: View {
 
                 VStack(alignment: .leading, spacing: 12) {
                     PermissionStep(number: "1", title: "Open Full Disk Access", subtitle: "GDriveVault will open the correct System Settings page.")
-                    PermissionStep(number: "2", title: "Enable GDriveVault", subtitle: "Turn on the switch next to GDriveVault. You may need to unlock System Settings.")
-                    PermissionStep(number: "3", title: "Restart GDriveVault if macOS asks", subtitle: "The permission takes effect after macOS accepts the change.")
+                    PermissionStep(number: "2", title: "Add GDriveVault if it is missing", subtitle: "If GDriveVault is not listed, click the + button, choose GDriveVault.app, and approve the prompt.")
+                    PermissionStep(number: "3", title: "Enable GDriveVault", subtitle: "Turn on the switch next to GDriveVault. You may need to unlock System Settings first.")
+                    PermissionStep(number: "4", title: "Restart GDriveVault if macOS asks", subtitle: "The permission takes effect after macOS accepts the change.")
                 }
 
                 HStack(spacing: 12) {
@@ -2153,12 +2154,12 @@ private struct FullDiskAccessGuideView: View {
                     Button {
                         NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
                     } label: {
-                        Label("Show App", systemImage: "app")
+                        Label("Reveal GDriveVault.app", systemImage: "app")
                     }
-                    .help("Use this if System Settings asks you to add the app manually.")
+                    .help("Use this to find the app when adding it with the + button.")
                 }
 
-                Text("Apple does not allow apps to grant this permission silently. This one-time step is the cleanest way to avoid surprise prompts later.")
+                Text("If GDriveVault is not shown in the list, add it manually with the + button. Apple does not allow apps to grant this permission silently.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
