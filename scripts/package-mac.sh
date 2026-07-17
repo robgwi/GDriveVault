@@ -4,7 +4,7 @@ set -euo pipefail
 APP_NAME="GDriveVault"
 BUNDLE_ID="com.gdrivevault.agent"
 MIN_MACOS="14.0"
-VERSION="${VERSION:-1.3.4}"
+VERSION="${VERSION:-1.3.5}"
 BUILD_NUMBER="${BUILD_NUMBER:-1}"
 CONFIGURATION="${CONFIGURATION:-release}"
 SIGN_IDENTITY="${SIGN_IDENTITY:--}"
@@ -12,21 +12,24 @@ SIGN_IDENTITY="${SIGN_IDENTITY:--}"
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUILD_DIR="$ROOT_DIR/.build/$CONFIGURATION"
 DIST_DIR="$ROOT_DIR/dist"
-APP_DIR="$DIST_DIR/$APP_NAME.app"
+STAGING_DIR="${TMPDIR:-/tmp}/gdrivevault-package-$VERSION"
+APP_DIR="$STAGING_DIR/$APP_NAME.app"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 ZIP_PATH="$DIST_DIR/$APP_NAME-mac-arm64-$VERSION.zip"
 ICON_SOURCE="$ROOT_DIR/Sources/GoogleDriveClone/Resources/Images/gdrivevault-app-icon.png"
-ICONSET_DIR="$DIST_DIR/$APP_NAME.iconset"
+ICONSET_DIR="$STAGING_DIR/$APP_NAME.iconset"
 ICON_PATH="$RESOURCES_DIR/$APP_NAME.icns"
 
 strip_signing_xattrs() {
   local path="$1"
   xattr -cr "$path" 2>/dev/null || true
-  find "$path" -print0 | xargs -0 xattr -d com.apple.FinderInfo 2>/dev/null || true
-  find "$path" -print0 | xargs -0 xattr -d "com.apple.fileprovider.fpfs#P" 2>/dev/null || true
-  find "$path" -print0 | xargs -0 xattr -d com.apple.ResourceFork 2>/dev/null || true
+  find "$path" -exec xattr -c {} \; 2>/dev/null || true
+  find "$path" -print0 | xargs -0 -n 1 xattr -d com.apple.FinderInfo 2>/dev/null || true
+  find "$path" -print0 | xargs -0 -n 1 xattr -d "com.apple.fileprovider.fpfs#P" 2>/dev/null || true
+  find "$path" -print0 | xargs -0 -n 1 xattr -d com.apple.ResourceFork 2>/dev/null || true
+  find "$path" -print0 | xargs -0 -n 1 xattr -d com.apple.provenance 2>/dev/null || true
 }
 
 echo "Building $APP_NAME ($CONFIGURATION)..."
@@ -55,7 +58,8 @@ if [[ ! -f "$ICON_SOURCE" ]]; then
 fi
 
 echo "Creating app bundle..."
-rm -rf "$APP_DIR" "$ZIP_PATH" "$ICONSET_DIR"
+rm -rf "$STAGING_DIR" "$ZIP_PATH"
+mkdir -p "$DIST_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 
 cp "$EXECUTABLE_PATH" "$MACOS_DIR/$APP_NAME"
@@ -113,6 +117,7 @@ strip_signing_xattrs "$APP_DIR"
 
 echo "Signing app with identity: $SIGN_IDENTITY"
 codesign --force --deep --sign "$SIGN_IDENTITY" "$APP_DIR"
+strip_signing_xattrs "$APP_DIR"
 
 echo "Verifying signature..."
 codesign --verify --deep --strict "$APP_DIR"

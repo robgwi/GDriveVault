@@ -62,9 +62,11 @@ private enum ControlConnectionState {
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
+    @AppStorage("gdrivevault.welcomeShown.v1") private var isWelcomeShown = false
     @AppStorage("gdrivevault.fullDiskAccessSetupComplete.v1") private var isFullDiskAccessSetupComplete = false
     @State private var selectedPage: AppPage = .dashboard
     @State private var isSettingsPresented = false
+    @State private var isWelcomePresented = false
     @State private var isFullDiskAccessGuidePresented = false
 
     var body: some View {
@@ -100,10 +102,10 @@ struct ContentView: View {
                 coordinator.refreshRemotes()
             }
             coordinator.checkForUpdates(showUpToDate: false)
-            presentFullDiskAccessGuideIfNeeded()
+            presentWelcomeOrFullDiskAccessGuideIfNeeded()
         }
         .onChange(of: coordinator.remoteControlSettings.isRegistered) {
-            presentFullDiskAccessGuideIfNeeded()
+            presentWelcomeOrFullDiskAccessGuideIfNeeded()
         }
         .alert(item: $coordinator.updateNotification) { notification in
             if let actionTitle = notification.actionTitle {
@@ -171,14 +173,37 @@ struct ContentView: View {
             FullDiskAccessGuideView(isSetupComplete: $isFullDiskAccessSetupComplete)
                 .frame(minWidth: 680, minHeight: 520)
         }
+        .sheet(isPresented: $isWelcomePresented, onDismiss: {
+            presentFullDiskAccessGuideIfNeeded()
+        }) {
+            WelcomeView(isWelcomeShown: $isWelcomeShown)
+                .frame(minWidth: 760, minHeight: 640)
+        }
+    }
+
+    private func presentWelcomeOrFullDiskAccessGuideIfNeeded() {
+        guard !coordinator.requiresRegistration,
+              !coordinator.isRemoteControlSettingsPresented else { return }
+        if !isWelcomeShown {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.6) {
+                guard !isWelcomeShown,
+                      !coordinator.requiresRegistration,
+                      !coordinator.isRemoteControlSettingsPresented else { return }
+                isWelcomePresented = true
+            }
+        } else {
+            presentFullDiskAccessGuideIfNeeded()
+        }
     }
 
     private func presentFullDiskAccessGuideIfNeeded() {
         guard !isFullDiskAccessSetupComplete,
+              isWelcomeShown,
               !coordinator.requiresRegistration,
               !coordinator.isRemoteControlSettingsPresented else { return }
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
             guard !isFullDiskAccessSetupComplete,
+                  isWelcomeShown,
                   !coordinator.requiresRegistration,
                   !coordinator.isRemoteControlSettingsPresented else { return }
             isFullDiskAccessGuidePresented = true
@@ -499,7 +524,7 @@ struct ContentView: View {
                         .font(.largeTitle.weight(.semibold))
                 }
 
-                Text("Coordinate multiple rclone profiles for fast, resilient Google Drive movement.")
+                Text("Welcome to GDriveVault--a faster, more powerful way to manage your Google Drive files on macOS.")
                     .font(.title3)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: 500, alignment: .leading)
@@ -1805,6 +1830,117 @@ private struct SettingsModalView: View {
             AccountTrackerPanel()
         case .backup:
             BackupSettingsPanel()
+        }
+    }
+}
+
+private struct WelcomeView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var isWelcomeShown: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            ZStack(alignment: .bottomLeading) {
+                Image("gdrivevault-hero", bundle: .gdriveVaultResources)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(height: 190)
+                    .clipped()
+
+                LinearGradient(
+                    colors: [
+                        Color.black.opacity(0.66),
+                        Color.black.opacity(0.28),
+                        Color.clear
+                    ],
+                    startPoint: .bottom,
+                    endPoint: .top
+                )
+
+                VStack(alignment: .leading, spacing: 8) {
+                    Text("Welcome to GDriveVault")
+                        .font(.largeTitle.weight(.bold))
+                        .foregroundStyle(.white)
+                    Text("A faster, more powerful way to manage your Google Drive files on macOS.")
+                        .font(.title3.weight(.medium))
+                        .foregroundStyle(.white.opacity(0.90))
+                }
+                .padding(24)
+            }
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 20) {
+                    Text("Welcome to GDriveVault--a faster, more powerful way to manage your Google Drive files on macOS.")
+                        .font(.title3.weight(.semibold))
+
+                    Text("Built for users who need more than the standard Google Drive desktop application, GDriveVault delivers enhanced performance, greater flexibility, and advanced file management tools designed to make working with cloud storage faster and easier.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("Key Features")
+                            .font(.headline)
+
+                        WelcomeFeature(icon: "arrow.up.arrow.down.circle.fill", title: "High-speed uploads and downloads", detail: "Optimized transfer performance for moving files quickly.")
+                        WelcomeFeature(icon: "slider.horizontal.3", title: "Advanced synchronization", detail: "Greater control over how your files move between your Mac and Google Drive.")
+                        WelcomeFeature(icon: "checklist", title: "Selective syncing", detail: "Choose specific folders and files to save storage and bandwidth.")
+                        WelcomeFeature(icon: "clock.arrow.circlepath", title: "Automatic background syncing", detail: "Keep your files up to date with less manual work.")
+                        WelcomeFeature(icon: "chart.line.uptrend.xyaxis", title: "Detailed progress and logs", detail: "See transfer status, activity history, and what happened after each run.")
+                        WelcomeFeature(icon: "exclamationmark.shield.fill", title: "Smart conflict handling", detail: "Designed to help prevent data loss during complex file movement.")
+                        WelcomeFeature(icon: "externaldrive.connected.to.line.below", title: "Reliable transfer engine", detail: "Efficiently handles large files and extensive file libraries.")
+                        WelcomeFeature(icon: "macwindow", title: "Native macOS experience", detail: "Fits into your workflow with focused Mac-first controls.")
+                    }
+
+                    Text("Whether you're syncing personal documents, collaborating with a team, or managing terabytes of data, GDriveVault is designed to provide a faster, more reliable, and more feature-rich Google Drive experience.")
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+
+                    Text("Thank you for choosing GDriveVault. We hope it becomes your preferred way to work with Google Drive.")
+                        .font(.callout.weight(.semibold))
+                }
+                .padding(24)
+            }
+
+            Divider()
+
+            HStack {
+                Text("You can continue setup after this welcome screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    isWelcomeShown = true
+                    dismiss()
+                } label: {
+                    Label("Get Started", systemImage: "arrow.right.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+        }
+    }
+}
+
+private struct WelcomeFeature: View {
+    let icon: String
+    let title: String
+    let detail: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: icon)
+                .font(.title3)
+                .foregroundStyle(.blue)
+                .frame(width: 28)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.callout.weight(.semibold))
+                Text(detail)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
     }
 }
