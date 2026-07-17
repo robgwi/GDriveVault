@@ -442,6 +442,7 @@ struct ContentView: View {
             VStack(alignment: .leading, spacing: 20) {
                 hero
                 dropUploadPanel
+                quickDownloadPanel
                 quickStats
                 liveTransferPanel
             }
@@ -590,13 +591,6 @@ struct ContentView: View {
                 Label("Quick Upload", systemImage: "tray.and.arrow.up.fill")
                     .font(.headline)
                 Spacer()
-                Button {
-                    coordinator.openDownloadBrowser()
-                } label: {
-                    Label("Browse Drive", systemImage: "folder.badge.plus")
-                }
-                .buttonStyle(.bordered)
-                .disabled(coordinator.requiresRegistration || coordinator.remotes.isEmpty || coordinator.isRunning)
                 Text(dropUploadDestinationText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
@@ -679,6 +673,61 @@ struct ContentView: View {
                 }
                 .buttonStyle(.borderedProminent)
                 .disabled(coordinator.requiresRegistration || coordinator.droppedUploadItems.isEmpty || coordinator.isRunning || coordinator.isRunningBandwidthTest || coordinator.isPreparingDroppedUpload)
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+
+    private var quickDownloadPanel: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Quick Download", systemImage: "arrow.down.folder.fill")
+                    .font(.headline)
+                Spacer()
+                Text(downloadDestinationSummary)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+            }
+
+            HStack(spacing: 18) {
+                Image(systemName: "folder.badge.plus")
+                    .font(.system(size: 34, weight: .semibold))
+                    .foregroundStyle(.green)
+                    .frame(width: 58, height: 58)
+                    .background(Color.green.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 5) {
+                    Text("Browse Google Drive and download files")
+                        .font(.title3.weight(.semibold))
+                    Text("Select files or folders from the remote drive, choose a local destination, then watch progress with pause, resume, and cancel controls.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+
+                Spacer()
+
+                Button {
+                    coordinator.openDownloadBrowser()
+                } label: {
+                    Label("Browse Drive", systemImage: "magnifyingglass")
+                }
+                .buttonStyle(.borderedProminent)
+                .controlSize(.large)
+                .disabled(coordinator.requiresRegistration || coordinator.remotes.isEmpty || coordinator.isRunning)
+            }
+
+            HStack(spacing: 16) {
+                LiveMetric(title: "Profiles", value: "\(coordinator.job.selectedRemoteNames.count)", icon: "person.2")
+                LiveMetric(title: "Destination", value: coordinator.downloadLocalPath, icon: "folder")
+                LiveMetric(title: "Status", value: downloadStatusText, icon: coordinator.isRunning && coordinator.job.direction == .download ? "arrow.down.circle.fill" : "circle")
             }
         }
         .padding(18)
@@ -782,6 +831,20 @@ struct ContentView: View {
 
     private var liveTransferredText: String {
         TransferStatsParser.formatBytes(activeRun?.progress?.transferredBytes ?? activeRun?.transferredBytes ?? coordinator.runs.reduce(Int64(0)) { $0 + $1.transferredBytes })
+    }
+
+    private var downloadDestinationSummary: String {
+        coordinator.downloadLocalPath.isEmpty ? "Choose a local destination" : coordinator.downloadLocalPath
+    }
+
+    private var downloadStatusText: String {
+        if coordinator.isRunning, coordinator.job.direction == .download {
+            return coordinator.isPaused ? "Paused" : "Downloading"
+        }
+        if coordinator.canResume, coordinator.job.direction == .download {
+            return "Resume available"
+        }
+        return "Ready"
     }
 
     private var bandwidthSpeedText: String {

@@ -332,7 +332,7 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
 }
 
 enum AppVersion {
-    static let current = "1.3.3"
+    static let current = "1.3.4"
 }
 
 struct UpdateNotification: Identifiable, Equatable {
