@@ -62,8 +62,10 @@ private enum ControlConnectionState {
 
 struct ContentView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
+    @AppStorage("gdrivevault.fullDiskAccessSetupComplete.v1") private var isFullDiskAccessSetupComplete = false
     @State private var selectedPage: AppPage = .dashboard
     @State private var isSettingsPresented = false
+    @State private var isFullDiskAccessGuidePresented = false
 
     var body: some View {
         NavigationSplitView {
@@ -98,6 +100,10 @@ struct ContentView: View {
                 coordinator.refreshRemotes()
             }
             coordinator.checkForUpdates(showUpToDate: false)
+            presentFullDiskAccessGuideIfNeeded()
+        }
+        .onChange(of: coordinator.remoteControlSettings.isRegistered) {
+            presentFullDiskAccessGuideIfNeeded()
         }
         .alert(item: $coordinator.updateNotification) { notification in
             if let actionTitle = notification.actionTitle {
@@ -148,9 +154,34 @@ struct ContentView: View {
                 .frame(minWidth: 680, minHeight: 540)
         }
         .sheet(isPresented: $isSettingsPresented) {
-            AppSettingsView(selectedPage: $selectedPage, isPresented: $isSettingsPresented)
+            AppSettingsView(
+                selectedPage: $selectedPage,
+                isPresented: $isSettingsPresented,
+                onOpenFullDiskAccessGuide: {
+                    isSettingsPresented = false
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) {
+                        isFullDiskAccessGuidePresented = true
+                    }
+                }
+            )
                 .environmentObject(coordinator)
                 .frame(minWidth: 760, minHeight: 560)
+        }
+        .sheet(isPresented: $isFullDiskAccessGuidePresented) {
+            FullDiskAccessGuideView(isSetupComplete: $isFullDiskAccessSetupComplete)
+                .frame(minWidth: 680, minHeight: 520)
+        }
+    }
+
+    private func presentFullDiskAccessGuideIfNeeded() {
+        guard !isFullDiskAccessSetupComplete,
+              !coordinator.requiresRegistration,
+              !coordinator.isRemoteControlSettingsPresented else { return }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
+            guard !isFullDiskAccessSetupComplete,
+                  !coordinator.requiresRegistration,
+                  !coordinator.isRemoteControlSettingsPresented else { return }
+            isFullDiskAccessGuidePresented = true
         }
     }
 
@@ -1715,10 +1746,128 @@ private struct SettingsModalView: View {
     }
 }
 
+private struct FullDiskAccessGuideView: View {
+    @Environment(\.dismiss) private var dismiss
+    @Binding var isSetupComplete: Bool
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "lock.shield.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 44, height: 44)
+                    .background(Color.blue.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Grant Mac Access")
+                        .font(.title2.weight(.semibold))
+                    Text("Allow GDriveVault to work without repeated folder prompts.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+
+                Spacer()
+            }
+            .padding(20)
+
+            Divider()
+
+            VStack(alignment: .leading, spacing: 18) {
+                Text("macOS protects folders like Downloads, Desktop, Documents, removable drives, and app update locations. Full Disk Access lets GDriveVault run syncs, downloads, logs, backups, and forced updates without stopping for access prompts.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                VStack(alignment: .leading, spacing: 12) {
+                    PermissionStep(number: "1", title: "Open Full Disk Access", subtitle: "GDriveVault will open the correct System Settings page.")
+                    PermissionStep(number: "2", title: "Enable GDriveVault", subtitle: "Turn on the switch next to GDriveVault. You may need to unlock System Settings.")
+                    PermissionStep(number: "3", title: "Restart GDriveVault if macOS asks", subtitle: "The permission takes effect after macOS accepts the change.")
+                }
+
+                HStack(spacing: 12) {
+                    Button {
+                        openFullDiskAccessSettings()
+                    } label: {
+                        Label("Open Full Disk Access", systemImage: "gearshape")
+                    }
+                    .buttonStyle(.borderedProminent)
+
+                    Button {
+                        NSWorkspace.shared.activateFileViewerSelecting([Bundle.main.bundleURL])
+                    } label: {
+                        Label("Show App", systemImage: "app")
+                    }
+                    .help("Use this if System Settings asks you to add the app manually.")
+                }
+
+                Text("Apple does not allow apps to grant this permission silently. This one-time step is the cleanest way to avoid surprise prompts later.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Spacer()
+
+            Divider()
+
+            HStack {
+                Button("Remind Me Later") {
+                    dismiss()
+                }
+                .keyboardShortcut(.cancelAction)
+
+                Spacer()
+
+                Button {
+                    isSetupComplete = true
+                    dismiss()
+                } label: {
+                    Label("I Granted Access", systemImage: "checkmark.circle.fill")
+                }
+                .buttonStyle(.borderedProminent)
+                .keyboardShortcut(.defaultAction)
+            }
+            .padding(20)
+        }
+    }
+
+    private func openFullDiskAccessSettings() {
+        if let url = URL(string: "x-apple.systempreferences:com.apple.preference.security?Privacy_AllFiles") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+}
+
+private struct PermissionStep: View {
+    let number: String
+    let title: String
+    let subtitle: String
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Text(number)
+                .font(.headline)
+                .foregroundStyle(.white)
+                .frame(width: 28, height: 28)
+                .background(Color.blue, in: Circle())
+
+            VStack(alignment: .leading, spacing: 3) {
+                Text(title)
+                    .font(.headline)
+                Text(subtitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        }
+    }
+}
+
 private struct AppSettingsView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
     @Binding var selectedPage: AppPage
     @Binding var isPresented: Bool
+    let onOpenFullDiskAccessGuide: () -> Void
     @State private var activeModal: SettingsModal?
 
     var body: some View {
@@ -1780,6 +1929,14 @@ private struct AppSettingsView: View {
                             subtitle: "\(coordinator.accountUsages.count) profiles tracked against the 750 GB daily limit"
                         ) {
                             activeModal = .accounts
+                        }
+
+                        SettingsActionRow(
+                            icon: "lock.shield",
+                            title: "Mac Permissions",
+                            subtitle: "Grant Full Disk Access to avoid folder prompts during updates and transfers"
+                        ) {
+                            onOpenFullDiskAccessGuide()
                         }
                     }
 
