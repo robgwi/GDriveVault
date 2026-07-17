@@ -1739,6 +1739,10 @@ final class SyncCoordinator: ObservableObject {
             bytesUpdated: bytesUpdated,
             recentChanges: Array(recentRemoteChanges.prefix(12)),
             internetDownloadMbps: latestBandwidthTest?.downloadMbps,
+            internetUploadMbps: latestBandwidthTest?.uploadMbps,
+            internetPublicIP: latestBandwidthTest?.publicIP,
+            internetLocation: latestBandwidthTest?.location,
+            internetProvider: latestBandwidthTest?.provider,
             speedTestedAt: latestBandwidthTest?.testedAt,
             error: latestRunError()
         )

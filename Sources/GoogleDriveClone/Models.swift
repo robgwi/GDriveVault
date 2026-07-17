@@ -318,7 +318,7 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
 }
 
 enum AppVersion {
-    static let current = "1.3.0"
+    static let current = "1.3.1"
 }
 
 struct UpdateNotification: Identifiable, Equatable {
@@ -483,6 +483,10 @@ struct RemoteControlHeartbeat: Encodable, Sendable {
     var bytesUpdated: Int64
     var recentChanges: [RemoteControlChange]
     var internetDownloadMbps: Double?
+    var internetUploadMbps: Double?
+    var internetPublicIP: String?
+    var internetLocation: String?
+    var internetProvider: String?
     var speedTestedAt: Date?
     var error: String?
 
@@ -510,6 +514,10 @@ struct RemoteControlHeartbeat: Encodable, Sendable {
         case bytesUpdated = "bytes_updated"
         case recentChanges = "recent_changes"
         case internetDownloadMbps = "internet_download_mbps"
+        case internetUploadMbps = "internet_upload_mbps"
+        case internetPublicIP = "internet_public_ip"
+        case internetLocation = "internet_location"
+        case internetProvider = "internet_provider"
         case speedTestedAt = "speed_tested_at"
         case error
     }
@@ -534,12 +542,23 @@ struct RemoteControlChange: Encodable, Hashable, Sendable {
 struct BandwidthTestResult: Codable, Equatable, Sendable {
     var testedAt: Date
     var downloadMbps: Double
+    var uploadMbps: Double?
     var bytesDownloaded: Int64
+    var bytesUploaded: Int64?
     var durationSeconds: Double
+    var uploadDurationSeconds: Double?
     var endpoint: String
+    var publicIP: String?
+    var location: String?
+    var provider: String?
 
     var displaySpeed: String {
         "\(String(format: "%.1f", downloadMbps)) Mbps"
+    }
+
+    var displayUploadSpeed: String {
+        guard let uploadMbps else { return "Unavailable" }
+        return "\(String(format: "%.1f", uploadMbps)) Mbps"
     }
 
     var displayTime: String {

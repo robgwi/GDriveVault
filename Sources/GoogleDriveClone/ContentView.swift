@@ -46,7 +46,7 @@ private enum AppPage: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
-        case .dashboard: "Account usage and live transfer health"
+        case .dashboard: "Quick upload and live transfer health"
         case .syncSettings: "Saved sync profiles and job setup"
         case .status: "Run logs and failover history"
         }
@@ -402,9 +402,7 @@ struct ContentView: View {
                 hero
                 dropUploadPanel
                 quickStats
-                bandwidthPanel
                 liveTransferPanel
-                accountTracker
             }
         case .syncSettings:
             VStack(alignment: .leading, spacing: 20) {
@@ -644,40 +642,7 @@ struct ContentView: View {
     }
 
     private var bandwidthPanel: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("Connection Check", systemImage: "network")
-                    .font(.headline)
-                Spacer()
-                Button {
-                    coordinator.runBandwidthTest()
-                } label: {
-                    if coordinator.isRunningBandwidthTest {
-                        Label("Testing", systemImage: "hourglass")
-                    } else {
-                        Label("Test Now", systemImage: "speedometer")
-                    }
-                }
-                .buttonStyle(.bordered)
-                .disabled(coordinator.isRunningBandwidthTest || coordinator.isRunning)
-            }
-
-            HStack(spacing: 16) {
-                LiveMetric(title: "Download", value: bandwidthSpeedText, icon: "arrow.down.circle")
-                LiveMetric(title: "Sample", value: bandwidthSampleText, icon: "externaldrive")
-                LiveMetric(title: "Last tested", value: coordinator.latestBandwidthTest?.displayTime ?? "Not tested", icon: "clock")
-            }
-
-            Text("GDriveVault runs this download check before starting sync, copy, mirror, or restart jobs.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
-        }
-        .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.07))
-        }
+        ConnectionCheckPanel()
     }
 
     private var liveTransferPanel: some View {
@@ -710,42 +675,7 @@ struct ContentView: View {
     }
 
     private var accountTracker: some View {
-        VStack(alignment: .leading, spacing: 14) {
-            HStack {
-                Label("Account Tracker", systemImage: "gauge.with.dots.needle.50percent")
-                    .font(.headline)
-                Spacer()
-                Text("750 GB per profile, last 24 hours")
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(.secondary)
-                Button {
-                    coordinator.resetAllUsage()
-                } label: {
-                    Image(systemName: "arrow.counterclockwise")
-                }
-                .buttonStyle(.borderless)
-                .help("Reset all usage")
-            }
-
-            if coordinator.accountUsages.isEmpty {
-                ContentUnavailableView("No accounts tracked", systemImage: "gauge", description: Text("Refresh profiles to start tracking transfer usage."))
-                    .frame(maxWidth: .infinity, minHeight: 120)
-            } else {
-                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
-                    ForEach(coordinator.accountUsages) { usage in
-                        AccountUsageTile(usage: usage) {
-                            coordinator.resetUsage(for: usage.remoteName)
-                        }
-                    }
-                }
-            }
-        }
-        .padding(18)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
-        .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(Color.primary.opacity(0.07))
-        }
+        AccountTrackerPanel()
     }
 
     private var selectedRemainingBytes: Int64 {
@@ -1513,10 +1443,266 @@ private struct AccountUsageTile: View {
     }
 }
 
+private struct ConnectionCheckPanel: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack {
+                Label("Connection Check", systemImage: "network")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    coordinator.runBandwidthTest()
+                } label: {
+                    if coordinator.isRunningBandwidthTest {
+                        Label("Testing", systemImage: "hourglass")
+                    } else {
+                        Label("Test Now", systemImage: "speedometer")
+                    }
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(coordinator.isRunningBandwidthTest || coordinator.isRunning)
+            }
+
+            LazyVGrid(columns: [GridItem(.adaptive(minimum: 170), spacing: 12)], spacing: 12) {
+                LiveMetric(title: "Download", value: downloadText, icon: "arrow.down.circle")
+                LiveMetric(title: "Upload", value: uploadText, icon: "arrow.up.circle")
+                LiveMetric(title: "Sample", value: sampleText, icon: "externaldrive")
+                LiveMetric(title: "Last tested", value: coordinator.latestBandwidthTest?.displayTime ?? "Not tested", icon: "clock")
+            }
+
+            if let result = coordinator.latestBandwidthTest {
+                VStack(alignment: .leading, spacing: 8) {
+                    SettingsInfoRow(label: "Public IP", value: result.publicIP ?? "Unavailable")
+                    SettingsInfoRow(label: "Location", value: result.location ?? "Unavailable")
+                    SettingsInfoRow(label: "Provider", value: result.provider ?? "Unavailable")
+                    SettingsInfoRow(label: "Endpoint", value: result.endpoint)
+                }
+                .padding(12)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            }
+
+            Text("GDriveVault posts the latest download speed, upload speed, public IP, and location metadata to GDriveVault Control with the agent heartbeat when available.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+
+    private var downloadText: String {
+        if coordinator.isRunningBandwidthTest {
+            return "Testing"
+        }
+        return coordinator.latestBandwidthTest?.displaySpeed ?? "No test"
+    }
+
+    private var uploadText: String {
+        if coordinator.isRunningBandwidthTest {
+            return "Testing"
+        }
+        return coordinator.latestBandwidthTest?.displayUploadSpeed ?? "No test"
+    }
+
+    private var sampleText: String {
+        guard let result = coordinator.latestBandwidthTest else { return "-" }
+        if let uploaded = result.bytesUploaded {
+            return "\(TransferStatsParser.formatBytes(result.bytesDownloaded)) down / \(TransferStatsParser.formatBytes(uploaded)) up"
+        }
+        return TransferStatsParser.formatBytes(result.bytesDownloaded)
+    }
+}
+
+private struct AccountTrackerPanel: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            HStack {
+                Label("Account Tracker", systemImage: "gauge.with.dots.needle.50percent")
+                    .font(.headline)
+                Spacer()
+                Text("750 GB per profile, last 24 hours")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                Button {
+                    coordinator.resetAllUsage()
+                } label: {
+                    Image(systemName: "arrow.counterclockwise")
+                }
+                .buttonStyle(.borderless)
+                .help("Reset all usage")
+            }
+
+            if coordinator.accountUsages.isEmpty {
+                ContentUnavailableView("No accounts tracked", systemImage: "gauge", description: Text("Refresh profiles to start tracking transfer usage."))
+                    .frame(maxWidth: .infinity, minHeight: 160)
+            } else {
+                LazyVGrid(columns: [GridItem(.adaptive(minimum: 260), spacing: 12)], spacing: 12) {
+                    ForEach(coordinator.accountUsages) { usage in
+                        AccountUsageTile(usage: usage) {
+                            coordinator.resetUsage(for: usage.remoteName)
+                        }
+                    }
+                }
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+}
+
+private struct BackupSettingsPanel: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Label("Backup & Restore", systemImage: "archivebox")
+                .font(.headline)
+
+            SettingsActionRow(
+                icon: "archivebox",
+                title: "Export Local Backup",
+                subtitle: "Save profiles, sync jobs, usage, and integrations",
+                isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
+            ) {
+                coordinator.backupSettings()
+            }
+
+            SettingsActionRow(
+                icon: "icloud.and.arrow.up",
+                title: coordinator.isUploadingSettingsBackup ? "Uploading Backup" : "Push Backup to Control Server",
+                subtitle: coordinator.remoteControlSettings.isRegistered ? "Store app settings and rclone profiles remotely" : "Register this Mac first",
+                isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup || !coordinator.remoteControlSettings.isRegistered
+            ) {
+                coordinator.uploadSettingsBackupToControlServer()
+            }
+
+            SettingsActionRow(
+                icon: "arrow.counterclockwise.circle",
+                title: "Restore From Backup",
+                subtitle: "Import a GDriveVault backup file",
+                isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
+            ) {
+                coordinator.restoreSettings()
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+}
+
+private struct SettingsInfoRow: View {
+    let label: String
+    let value: String
+
+    var body: some View {
+        HStack(alignment: .firstTextBaseline) {
+            Text(label)
+                .foregroundStyle(.secondary)
+            Spacer(minLength: 16)
+            Text(value)
+                .fontWeight(.medium)
+                .multilineTextAlignment(.trailing)
+                .textSelection(.enabled)
+        }
+        .font(.callout)
+    }
+}
+
+private enum SettingsModal: String, Identifiable {
+    case connection
+    case accounts
+    case backup
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .connection: "Connection Check"
+        case .accounts: "Account Usage"
+        case .backup: "Backup & Restore"
+        }
+    }
+
+    var icon: String {
+        switch self {
+        case .connection: "network"
+        case .accounts: "gauge.with.dots.needle.50percent"
+        case .backup: "archivebox"
+        }
+    }
+}
+
+private struct SettingsModalView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+    @Environment(\.dismiss) private var dismiss
+    let modal: SettingsModal
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 12) {
+                Image(systemName: modal.icon)
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 44, height: 44)
+                    .background(Color.blue.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                Text(modal.title)
+                    .font(.title2.weight(.semibold))
+
+                Spacer()
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                modalContent
+                    .padding(20)
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var modalContent: some View {
+        switch modal {
+        case .connection:
+            ConnectionCheckPanel()
+        case .accounts:
+            AccountTrackerPanel()
+        case .backup:
+            BackupSettingsPanel()
+        }
+    }
+}
+
 private struct AppSettingsView: View {
     @EnvironmentObject private var coordinator: SyncCoordinator
     @Binding var selectedPage: AppPage
     @Binding var isPresented: Bool
+    @State private var activeModal: SettingsModal?
 
     var body: some View {
         VStack(spacing: 0) {
@@ -1554,11 +1740,29 @@ private struct AppSettingsView: View {
                     SettingsGroup(title: "Sync") {
                         SettingsActionRow(
                             icon: "slider.horizontal.3",
-                            title: "Sync Settings",
+                            title: "Sync Profiles",
                             subtitle: "Saved sync profiles and job setup"
                         ) {
                             selectedPage = .syncSettings
                             isPresented = false
+                        }
+                    }
+
+                    SettingsGroup(title: "Diagnostics") {
+                        SettingsActionRow(
+                            icon: "network",
+                            title: "Connection Check",
+                            subtitle: coordinator.latestBandwidthTest?.displayTime ?? "Run speed, IP, and location check"
+                        ) {
+                            activeModal = .connection
+                        }
+
+                        SettingsActionRow(
+                            icon: "gauge.with.dots.needle.50percent",
+                            title: "Account Usage",
+                            subtitle: "\(coordinator.accountUsages.count) profiles tracked against the 750 GB daily limit"
+                        ) {
+                            activeModal = .accounts
                         }
                     }
 
@@ -1587,35 +1791,11 @@ private struct AppSettingsView: View {
                     SettingsGroup(title: "Backup") {
                         SettingsActionRow(
                             icon: "archivebox",
-                            title: "Backup Settings",
-                            subtitle: "Export profiles, sync jobs, usage, and integrations",
+                            title: "Backup & Restore",
+                            subtitle: "Export, restore, or push settings to GDriveVault Control",
                             isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
                         ) {
-                            closeThen {
-                                coordinator.backupSettings()
-                            }
-                        }
-
-                        SettingsActionRow(
-                            icon: "icloud.and.arrow.up",
-                            title: coordinator.isUploadingSettingsBackup ? "Uploading Backup" : "Push Backup to Control Server",
-                            subtitle: coordinator.remoteControlSettings.isRegistered ? "Store app settings and rclone profiles remotely" : "Register Remote Control first",
-                            isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup || !coordinator.remoteControlSettings.isRegistered
-                        ) {
-                            closeThen {
-                                coordinator.uploadSettingsBackupToControlServer()
-                            }
-                        }
-
-                        SettingsActionRow(
-                            icon: "arrow.counterclockwise.circle",
-                            title: "Restore Settings",
-                            subtitle: "Import a GDriveVault backup",
-                            isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
-                        ) {
-                            closeThen {
-                                coordinator.restoreSettings()
-                            }
+                            activeModal = .backup
                         }
                     }
 
@@ -1652,6 +1832,11 @@ private struct AppSettingsView: View {
                 }
                 .padding(20)
             }
+        }
+        .sheet(item: $activeModal) { modal in
+            SettingsModalView(modal: modal)
+                .environmentObject(coordinator)
+                .frame(minWidth: 700, minHeight: 520)
         }
     }
 

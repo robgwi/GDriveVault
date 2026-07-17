@@ -57,7 +57,7 @@ The script creates:
 
 ```text
 dist/GDriveVault.app
-dist/GDriveVault-mac-arm64-1.3.0.zip
+dist/GDriveVault-mac-arm64-1.3.1.zip
 ```
 
 Set a release version when packaging:
@@ -68,7 +68,7 @@ VERSION=1.0.1 BUILD_NUMBER=2 ./scripts/package-mac.sh
 
 To install on another Mac:
 
-1. Copy `dist/GDriveVault-mac-arm64-1.3.0.zip` to the target Mac.
+1. Copy `dist/GDriveVault-mac-arm64-1.3.1.zip` to the target Mac.
 2. Unzip it.
 3. Drag `GDriveVault.app` into `/Applications`.
 4. Install `rclone` with Homebrew.
@@ -81,7 +81,7 @@ The packaged app is ad-hoc signed by default. For external distribution, sign wi
 The script accepts environment variables:
 
 ```text
-VERSION=1.3.0
+VERSION=1.3.1
 BUILD_NUMBER=1
 CONFIGURATION=release
 SIGN_IDENTITY=-
