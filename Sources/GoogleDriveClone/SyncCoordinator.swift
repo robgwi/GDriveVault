@@ -114,6 +114,7 @@ final class SyncCoordinator: ObservableObject {
     private let remoteControlService = RemoteControlService()
     private let bandwidthTestService = BandwidthTestService()
     private let bandwidthTestStore = BandwidthTestStore()
+    private let updateInstaller = UpdateInstaller()
     private var runTask: Task<Void, Never>?
     private var remoteControlTask: Task<Void, Never>?
     private var pendingRegistrationTask: Task<Void, Never>?
@@ -342,9 +343,10 @@ final class SyncCoordinator: ObservableObject {
                     if result.hasUpdate {
                         updateNotification = UpdateNotification(
                             title: "GDriveVault \(result.latestVersion) is available",
-                            message: "You are running \(result.currentVersion). Download the latest build from GDriveVault Control.",
-                            actionTitle: "Open Download",
-                            actionURL: result.releaseURL
+                            message: "You are running \(result.currentVersion). Install the latest build from GDriveVault Control.",
+                            actionTitle: "Install Update",
+                            actionURL: result.releaseURL,
+                            installRequest: result.installRequest
                         )
                         statusMessage = "Update available: \(result.latestVersion)."
                     } else if showUpToDate {
@@ -369,6 +371,74 @@ final class SyncCoordinator: ObservableObject {
                         )
                     }
                     statusMessage = showUpToDate ? "Update check failed." : statusMessage
+                }
+            }
+        }
+    }
+
+    func installUpdateFromNotification(_ notification: UpdateNotification) {
+        guard let request = notification.installRequest else {
+            if let url = notification.actionURL {
+                NSWorkspace.shared.open(url)
+            }
+            return
+        }
+        installUpdate(request, source: "manual")
+    }
+
+    private func installLatestUpdateFromControl(payload: [String: String]) async throws {
+        let request: UpdateInstallRequest
+        if let rawURL = payload["download_url"] ?? payload["downloadURL"],
+           let url = URL(string: rawURL),
+           let version = payload["version"] ?? payload["latest"] {
+            request = UpdateInstallRequest(version: version, downloadURL: url, sha256: payload["sha256"])
+        } else {
+            let result = try await updateChecker.check(currentVersion: AppVersion.current, settings: remoteControlSettings)
+            guard result.hasUpdate else {
+                await MainActor.run {
+                    statusMessage = "Remote update ignored: GDriveVault is already up to date."
+                }
+                return
+            }
+            request = result.installRequest
+        }
+
+        await MainActor.run {
+            installUpdate(request, source: "remote")
+        }
+    }
+
+    private func installUpdate(_ request: UpdateInstallRequest, source: String) {
+        guard !isRunning else {
+            statusMessage = "Update blocked while a transfer is running."
+            return
+        }
+        guard !isCheckingForUpdates else { return }
+
+        isCheckingForUpdates = true
+        statusMessage = source == "remote" ? "Installing forced update \(request.version)..." : "Installing update \(request.version)..."
+
+        Task {
+            do {
+                let helperURL = try await updateInstaller.prepareInstall(request)
+                try await updateInstaller.launchInstaller(helperURL: helperURL)
+                await MainActor.run {
+                    isCheckingForUpdates = false
+                    statusMessage = "Update installer launched. GDriveVault will restart."
+                    DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) {
+                        NSApp.terminate(nil)
+                    }
+                }
+            } catch {
+                await MainActor.run {
+                    isCheckingForUpdates = false
+                    statusMessage = "Update install failed: \(error.localizedDescription)"
+                    updateNotification = UpdateNotification(
+                        title: "Update install failed",
+                        message: error.localizedDescription,
+                        actionTitle: nil,
+                        actionURL: nil
+                    )
                 }
             }
         }
@@ -1710,6 +1780,8 @@ final class SyncCoordinator: ObservableObject {
             await MainActor.run { refreshRemotes() }
         case "check_updates":
             await MainActor.run { checkForUpdates(showUpToDate: true) }
+        case "install_update", "force_update":
+            try await installLatestUpdateFromControl(payload: command.payload ?? [:])
         case "restart", "restart_app":
             await MainActor.run { restartApplicationFromRemoteCommand() }
         case "restore_settings_backup":

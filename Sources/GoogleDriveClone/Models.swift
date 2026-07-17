@@ -318,7 +318,7 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
 }
 
 enum AppVersion {
-    static let current = "1.2.0"
+    static let current = "1.3.0"
 }
 
 struct UpdateNotification: Identifiable, Equatable {
@@ -327,6 +327,11 @@ struct UpdateNotification: Identifiable, Equatable {
     var message: String
     var actionTitle: String?
     var actionURL: URL?
+    var installRequest: UpdateInstallRequest? = nil
+
+    static func == (lhs: UpdateNotification, rhs: UpdateNotification) -> Bool {
+        lhs.id == rhs.id
+    }
 }
 
 struct GoogleChatSettings: Codable, Equatable, Sendable {

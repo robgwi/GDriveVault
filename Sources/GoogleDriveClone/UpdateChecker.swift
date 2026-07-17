@@ -25,7 +25,8 @@ actor UpdateChecker {
             latestVersion: latestVersion,
             currentVersion: currentVersion,
             releaseURL: update.downloadURL,
-            releaseName: update.notes
+            releaseName: update.notes,
+            sha256: update.sha256
         )
     }
 
@@ -69,17 +70,24 @@ struct UpdateCheckResult: Sendable {
     var currentVersion: String
     var releaseURL: URL
     var releaseName: String?
+    var sha256: String?
+
+    var installRequest: UpdateInstallRequest {
+        UpdateInstallRequest(version: latestVersion, downloadURL: releaseURL, sha256: sha256)
+    }
 }
 
 private struct ControlUpdate: Decodable {
     var latest: String
     var downloadURL: URL
     var notes: String?
+    var sha256: String?
 
     enum CodingKeys: String, CodingKey {
         case latest
         case downloadURL = "download_url"
         case notes
+        case sha256
     }
 }
 

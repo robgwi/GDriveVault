@@ -57,7 +57,7 @@ The script creates:
 
 ```text
 dist/GDriveVault.app
-dist/GDriveVault-mac-arm64-1.2.0.zip
+dist/GDriveVault-mac-arm64-1.3.0.zip
 ```
 
 Set a release version when packaging:
@@ -68,7 +68,7 @@ VERSION=1.0.1 BUILD_NUMBER=2 ./scripts/package-mac.sh
 
 To install on another Mac:
 
-1. Copy `dist/GDriveVault-mac-arm64-1.2.0.zip` to the target Mac.
+1. Copy `dist/GDriveVault-mac-arm64-1.3.0.zip` to the target Mac.
 2. Unzip it.
 3. Drag `GDriveVault.app` into `/Applications`.
 4. Install `rclone` with Homebrew.
@@ -81,7 +81,7 @@ The packaged app is ad-hoc signed by default. For external distribution, sign wi
 The script accepts environment variables:
 
 ```text
-VERSION=1.2.0
+VERSION=1.3.0
 BUILD_NUMBER=1
 CONFIGURATION=release
 SIGN_IDENTITY=-
@@ -225,6 +225,7 @@ resume
 cancel_job
 refresh_remotes
 check_updates
+install_update
 restart_app
 restore_settings_backup
 ```
@@ -252,3 +253,5 @@ GDriveVault checks GDriveVault Control at:
 ```
 
 Keep `AppVersion.current` in `Sources/GoogleDriveClone/Models.swift` aligned with each packaged release and update the control-server feed when publishing a new build.
+
+When an update is available, a local user can click Install Update in GDriveVault. GDriveVault Control can also queue `install_update` for a connected agent. The agent downloads the published zip, verifies the optional SHA256 value if provided by the update feed or command payload, launches a helper installer, quits, replaces the old `.app`, and relaunches.

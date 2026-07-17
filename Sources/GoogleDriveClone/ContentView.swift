@@ -100,12 +100,12 @@ struct ContentView: View {
             coordinator.checkForUpdates(showUpToDate: false)
         }
         .alert(item: $coordinator.updateNotification) { notification in
-            if let actionTitle = notification.actionTitle, let actionURL = notification.actionURL {
+            if let actionTitle = notification.actionTitle {
                 Alert(
                     title: Text(notification.title),
                     message: Text(notification.message),
                     primaryButton: .default(Text(actionTitle)) {
-                        NSWorkspace.shared.open(actionURL)
+                        coordinator.installUpdateFromNotification(notification)
                     },
                     secondaryButton: .cancel()
                 )
