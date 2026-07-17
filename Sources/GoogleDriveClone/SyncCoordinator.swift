@@ -1178,7 +1178,7 @@ final class SyncCoordinator: ObservableObject {
 
     func openDownloadBrowser() {
         browserRemoteName = firstSelectedRemoteName() ?? remotes.first?.name ?? ""
-        browserPath = job.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        browserPath = ""
         selectedRemoteItemIDs = []
         isDownloadBrowserPresented = true
         loadRemoteItems()
@@ -1266,7 +1266,6 @@ final class SyncCoordinator: ObservableObject {
         let includes = selectedItems.map { item in
             item.isDirectory ? "\(item.name)/**" : item.name
         }
-        let selectedRemotes = job.selectedRemoteNames.isEmpty ? Set([browserRemoteName]) : job.selectedRemoteNames
         let downloadJob = SyncJob(
             name: "Download \(selectedItems.count) item\(selectedItems.count == 1 ? "" : "s")",
             localPath: downloadLocalPath,
@@ -1274,7 +1273,7 @@ final class SyncCoordinator: ObservableObject {
             remoteRootName: job.remoteRootName,
             direction: .download,
             mode: .copy,
-            selectedRemoteNames: selectedRemotes,
+            selectedRemoteNames: Set([browserRemoteName]),
             transfers: job.transfers,
             checkers: job.checkers,
             dryRun: false,

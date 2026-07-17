@@ -2778,9 +2778,19 @@ private struct RemoteDownloadItemRow: View {
             }
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            onToggle()
-        }
+        .gesture(
+            TapGesture(count: 2)
+                .onEnded {
+                    if item.isDirectory {
+                        onOpen()
+                    } else {
+                        onToggle()
+                    }
+                }
+                .exclusively(before: TapGesture().onEnded {
+                    onToggle()
+                })
+        )
     }
 }
 
