@@ -122,6 +122,13 @@ actor RcloneService {
             ])
         }
 
+        if job.direction == .download, !job.remoteIncludes.isEmpty {
+            for include in job.remoteIncludes {
+                arguments.append(contentsOf: ["--include", include])
+            }
+            arguments.append(contentsOf: ["--exclude", "*"])
+        }
+
         if job.dryRun {
             arguments.append("--dry-run")
         }
@@ -143,6 +150,32 @@ actor RcloneService {
             }
             .filter { !$0.name.isEmpty }
             .sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    }
+
+    func listRemoteItems(remoteName: String, path: String) async throws -> [RemoteItem] {
+        let cleanedPath = path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        let remotePath = cleanedPath.isEmpty ? remoteName : "\(remoteName)\(cleanedPath)"
+        let output = try await runCapture(arguments: ["lsjson", remotePath, "--max-depth", "1"])
+        let items = try JSONDecoder.rcloneDateDecoder.decode([RcloneListItem].self, from: Data(output.utf8))
+
+        return items
+            .filter { !$0.name.isEmpty }
+            .map { item in
+                let childPath = cleanedPath.isEmpty ? item.name : "\(cleanedPath)/\(item.name)"
+                return RemoteItem(
+                    name: item.name,
+                    path: childPath,
+                    isDirectory: item.isDir,
+                    size: item.size,
+                    modified: item.modTime
+                )
+            }
+            .sorted { lhs, rhs in
+                if lhs.isDirectory != rhs.isDirectory {
+                    return lhs.isDirectory && !rhs.isDirectory
+                }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
     }
 
     private func runCapture(arguments: [String]) async throws -> String {
@@ -222,5 +255,48 @@ actor RcloneService {
         }
 
         return URL(fileURLWithPath: "/opt/homebrew/bin/rclone")
+    }
+}
+
+private struct RcloneListItem: Decodable {
+    var name: String
+    var path: String?
+    var size: Int64?
+    var isDir: Bool
+    var modTime: Date?
+
+    enum CodingKeys: String, CodingKey {
+        case name = "Name"
+        case path = "Path"
+        case size = "Size"
+        case isDir = "IsDir"
+        case modTime = "ModTime"
+    }
+}
+
+private extension JSONDecoder {
+    static var rcloneDateDecoder: JSONDecoder {
+        let decoder = JSONDecoder()
+        decoder.dateDecodingStrategy = .custom { decoder in
+            let container = try decoder.singleValueContainer()
+            let value = try container.decode(String.self)
+            if let date = Self.rcloneDate(from: value) {
+                return date
+            }
+            throw DecodingError.dataCorruptedError(in: container, debugDescription: "Invalid rclone date.")
+        }
+        return decoder
+    }
+
+    private static func rcloneDate(from value: String) -> Date? {
+        let fractional = ISO8601DateFormatter()
+        fractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        if let date = fractional.date(from: value) {
+            return date
+        }
+
+        let plain = ISO8601DateFormatter()
+        plain.formatOptions = [.withInternetDateTime]
+        return plain.date(from: value)
     }
 }

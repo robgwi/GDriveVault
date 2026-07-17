@@ -64,13 +64,22 @@ final class SyncCoordinator: ObservableObject {
     @Published var isSavingProfiles = false
     @Published var isConfigWizardPresented = false
     @Published var isRemoteBrowserPresented = false
+    @Published var isDownloadBrowserPresented = false
+    @Published var isDownloadManagerPresented = false
     @Published var isLoadingRemoteFolders = false
+    @Published var isLoadingRemoteItems = false
     @Published var configPath = ""
     @Published var profileDrafts: [RcloneProfileDraft] = []
     @Published var configSession = RcloneConfigSession()
     @Published var browserRemoteName = ""
     @Published var browserPath = ""
     @Published var remoteFolders: [RemoteFolder] = []
+    @Published var remoteItems: [RemoteItem] = []
+    @Published var selectedRemoteItemIDs: Set<RemoteItem.ID> = []
+    @Published var downloadLocalPath = FileManager.default
+        .homeDirectoryForCurrentUser
+        .appendingPathComponent("Downloads/GDriveVault Downloads", isDirectory: true)
+        .path
     @Published var accountUsages: [AccountUsage] = []
     @Published var savedJobs: [SyncJob] = []
     @Published var selectedJobID: SyncJob.ID?
@@ -1049,6 +1058,14 @@ final class SyncCoordinator: ObservableObject {
         loadRemoteFolders()
     }
 
+    func selectDownloadBrowserRemote(_ remoteName: String) {
+        browserRemoteName = remoteName
+        browserPath = ""
+        remoteItems = []
+        selectedRemoteItemIDs = []
+        loadRemoteItems()
+    }
+
     func openRemoteFolder(_ folder: RemoteFolder) {
         browserPath = folder.path
         loadRemoteFolders()
@@ -1087,6 +1104,120 @@ final class SyncCoordinator: ObservableObject {
             }
             isLoadingRemoteFolders = false
         }
+    }
+
+    func openDownloadBrowser() {
+        browserRemoteName = firstSelectedRemoteName() ?? remotes.first?.name ?? ""
+        browserPath = job.remotePath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        selectedRemoteItemIDs = []
+        isDownloadBrowserPresented = true
+        loadRemoteItems()
+    }
+
+    func loadRemoteItems() {
+        guard !browserRemoteName.isEmpty else {
+            statusMessage = "Choose a profile before browsing Drive files."
+            remoteItems = []
+            return
+        }
+
+        isLoadingRemoteItems = true
+        statusMessage = "Loading \(browserRemoteName)\(browserPath)..."
+
+        Task {
+            do {
+                let items = try await rclone.listRemoteItems(remoteName: browserRemoteName, path: browserPath)
+                await MainActor.run {
+                    remoteItems = items
+                    selectedRemoteItemIDs = selectedRemoteItemIDs.intersection(Set(items.map(\.id)))
+                    statusMessage = items.isEmpty ? "No files or folders found at this location." : "Loaded \(items.count) remote items."
+                    isLoadingRemoteItems = false
+                }
+            } catch {
+                await MainActor.run {
+                    statusMessage = error.localizedDescription
+                    remoteItems = []
+                    selectedRemoteItemIDs = []
+                    isLoadingRemoteItems = false
+                }
+            }
+        }
+    }
+
+    func openDownloadFolder(_ item: RemoteItem) {
+        guard item.isDirectory else { return }
+        browserPath = item.path
+        selectedRemoteItemIDs = []
+        loadRemoteItems()
+    }
+
+    func goToParentDownloadFolder() {
+        guard !browserPath.isEmpty else { return }
+        var parts = browserPath.split(separator: "/").map(String.init)
+        parts.removeLast()
+        browserPath = parts.joined(separator: "/")
+        selectedRemoteItemIDs = []
+        loadRemoteItems()
+    }
+
+    func toggleRemoteItemSelection(_ item: RemoteItem) {
+        if selectedRemoteItemIDs.contains(item.id) {
+            selectedRemoteItemIDs.remove(item.id)
+        } else {
+            selectedRemoteItemIDs.insert(item.id)
+        }
+    }
+
+    func chooseDownloadDestination() {
+        let panel = NSOpenPanel()
+        panel.title = "Choose Download Destination"
+        panel.canChooseFiles = false
+        panel.canChooseDirectories = true
+        panel.allowsMultipleSelection = false
+        panel.canCreateDirectories = true
+        if panel.runModal() == .OK, let url = panel.url {
+            downloadLocalPath = url.path
+        }
+    }
+
+    func startSelectedRemoteDownload() {
+        guard !isRunning, !isRunningBandwidthTest else { return }
+        guard ensureLicenseAllowsOperation() else { return }
+        let selectedItems = remoteItems.filter { selectedRemoteItemIDs.contains($0.id) }
+        guard !selectedItems.isEmpty else {
+            statusMessage = "Select at least one file or folder to download."
+            return
+        }
+        guard !downloadLocalPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            statusMessage = "Choose a local download destination."
+            return
+        }
+
+        let includes = selectedItems.map { item in
+            item.isDirectory ? "\(item.name)/**" : item.name
+        }
+        let selectedRemotes = job.selectedRemoteNames.isEmpty ? Set([browserRemoteName]) : job.selectedRemoteNames
+        let downloadJob = SyncJob(
+            name: "Download \(selectedItems.count) item\(selectedItems.count == 1 ? "" : "s")",
+            localPath: downloadLocalPath,
+            remotePath: browserPath,
+            remoteRootName: job.remoteRootName,
+            direction: .download,
+            mode: .copy,
+            selectedRemoteNames: selectedRemotes,
+            transfers: job.transfers,
+            checkers: job.checkers,
+            dryRun: false,
+            cleanupLocalPathAfterRun: nil,
+            remoteIncludes: includes
+        )
+
+        job = downloadJob
+        hasRunnableJob = true
+        selectedJobID = nil
+        isDownloadBrowserPresented = false
+        isDownloadManagerPresented = true
+        start()
     }
 
     func start() {
@@ -1295,7 +1426,7 @@ final class SyncCoordinator: ObservableObject {
         guard isRunning, !isPaused else { return }
         activeProcessHandle?.pause()
         isPaused = true
-        statusMessage = "Transfer paused. Keep GDriveVault open to resume the active partial upload."
+        statusMessage = "Transfer paused. Keep GDriveVault open to resume the active partial file."
     }
 
     func continuePausedRun() {

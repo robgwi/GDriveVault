@@ -44,6 +44,15 @@ struct RemoteFolder: Identifiable, Hashable, Sendable {
     let path: String
 }
 
+struct RemoteItem: Identifiable, Hashable, Sendable {
+    var id: String { "\(isDirectory ? "d" : "f"):\(path)" }
+    let name: String
+    let path: String
+    let isDirectory: Bool
+    let size: Int64?
+    let modified: Date?
+}
+
 struct DroppedUploadItem: Identifiable, Hashable, Sendable {
     let id = UUID()
     var url: URL
@@ -169,6 +178,7 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
     var checkers: Int
     var dryRun: Bool
     var cleanupLocalPathAfterRun: String?
+    var remoteIncludes: [String]
 
     static let sample = SyncJob(
         name: "Workspace upload",
@@ -197,6 +207,7 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
         case checkers
         case dryRun
         case cleanupLocalPathAfterRun
+        case remoteIncludes
     }
 
     init(
@@ -211,7 +222,8 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
         transfers: Int,
         checkers: Int,
         dryRun: Bool,
-        cleanupLocalPathAfterRun: String?
+        cleanupLocalPathAfterRun: String?,
+        remoteIncludes: [String] = []
     ) {
         self.id = id
         self.name = name
@@ -225,6 +237,7 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
         self.checkers = checkers
         self.dryRun = dryRun
         self.cleanupLocalPathAfterRun = cleanupLocalPathAfterRun
+        self.remoteIncludes = remoteIncludes
     }
 
     init(from decoder: Decoder) throws {
@@ -241,6 +254,7 @@ struct SyncJob: Identifiable, Hashable, Codable, Sendable {
         checkers = try container.decode(Int.self, forKey: .checkers)
         dryRun = try container.decode(Bool.self, forKey: .dryRun)
         cleanupLocalPathAfterRun = try container.decodeIfPresent(String.self, forKey: .cleanupLocalPathAfterRun)
+        remoteIncludes = try container.decodeIfPresent([String].self, forKey: .remoteIncludes) ?? []
     }
 }
 
@@ -318,7 +332,7 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
 }
 
 enum AppVersion {
-    static let current = "1.3.1"
+    static let current = "1.3.2"
 }
 
 struct UpdateNotification: Identifiable, Equatable {

@@ -127,6 +127,16 @@ struct ContentView: View {
                 .environmentObject(coordinator)
                 .frame(minWidth: 760, minHeight: 560)
         }
+        .sheet(isPresented: $coordinator.isDownloadBrowserPresented) {
+            RemoteDownloadBrowserView()
+                .environmentObject(coordinator)
+                .frame(minWidth: 860, minHeight: 620)
+        }
+        .sheet(isPresented: $coordinator.isDownloadManagerPresented) {
+            DownloadTransferWindow()
+                .environmentObject(coordinator)
+                .frame(minWidth: 820, minHeight: 620)
+        }
         .sheet(isPresented: $coordinator.isChatSettingsPresented) {
             GoogleChatSettingsView()
                 .environmentObject(coordinator)
@@ -549,6 +559,13 @@ struct ContentView: View {
                 Label("Quick Upload", systemImage: "tray.and.arrow.up.fill")
                     .font(.headline)
                 Spacer()
+                Button {
+                    coordinator.openDownloadBrowser()
+                } label: {
+                    Label("Browse Drive", systemImage: "folder.badge.plus")
+                }
+                .buttonStyle(.bordered)
+                .disabled(coordinator.requiresRegistration || coordinator.remotes.isEmpty || coordinator.isRunning)
                 Text(dropUploadDestinationText)
                     .font(.caption.weight(.medium))
                     .foregroundStyle(.secondary)
@@ -2043,6 +2060,292 @@ private struct RemoteBrowserView: View {
                 .disabled(coordinator.browserRemoteName.isEmpty)
             }
             .padding(20)
+        }
+    }
+}
+
+private struct RemoteDownloadBrowserView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+    @Environment(\.dismiss) private var dismiss
+
+    private var browserLocation: String {
+        let path = coordinator.browserPath.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+        return path.isEmpty ? "\(coordinator.browserRemoteName) root" : "\(coordinator.browserRemoteName)\(path)"
+    }
+
+    private var selectedCount: Int {
+        coordinator.selectedRemoteItemIDs.count
+    }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.down.folder.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 42, height: 42)
+                    .background(Color.blue.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Drive Browser")
+                        .font(.title2.weight(.semibold))
+                    Text(browserLocation)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                Picker("Profile", selection: Binding(
+                    get: { coordinator.browserRemoteName },
+                    set: { coordinator.selectDownloadBrowserRemote($0) }
+                )) {
+                    ForEach(coordinator.remotes) { remote in
+                        Text(remote.displayName).tag(remote.name)
+                    }
+                }
+                .frame(width: 220)
+
+                Button {
+                    coordinator.loadRemoteItems()
+                } label: {
+                    Image(systemName: "arrow.clockwise")
+                }
+                .help("Refresh file list")
+                .disabled(coordinator.isLoadingRemoteItems)
+            }
+            .padding(20)
+
+            Divider()
+
+            HStack(spacing: 12) {
+                Button {
+                    coordinator.goToParentDownloadFolder()
+                } label: {
+                    Label("Up", systemImage: "chevron.up")
+                }
+                .disabled(coordinator.browserPath.isEmpty || coordinator.isLoadingRemoteItems)
+
+                Text(coordinator.browserPath.isEmpty ? "/" : "/\(coordinator.browserPath)")
+                    .font(.system(.callout, design: .monospaced))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+
+                Spacer()
+
+                Text("\(selectedCount) selected")
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 12)
+
+            if coordinator.isLoadingRemoteItems {
+                ProgressView("Loading Drive files...")
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else if coordinator.remoteItems.isEmpty {
+                ContentUnavailableView("No files here", systemImage: "folder", description: Text("Refresh or choose another folder."))
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                List(coordinator.remoteItems) { item in
+                    RemoteDownloadItemRow(
+                        item: item,
+                        isSelected: coordinator.selectedRemoteItemIDs.contains(item.id),
+                        onToggle: {
+                            coordinator.toggleRemoteItemSelection(item)
+                        },
+                        onOpen: {
+                            coordinator.openDownloadFolder(item)
+                        }
+                    )
+                    .padding(.vertical, 5)
+                }
+                .listStyle(.inset)
+            }
+
+            Divider()
+
+            VStack(spacing: 12) {
+                HStack(spacing: 12) {
+                    Text("Download to")
+                        .foregroundStyle(.secondary)
+                    Text(coordinator.downloadLocalPath)
+                        .font(.system(.callout, design: .monospaced))
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                        .textSelection(.enabled)
+                    Spacer()
+                    Button {
+                        coordinator.chooseDownloadDestination()
+                    } label: {
+                        Label("Choose", systemImage: "folder")
+                    }
+                }
+
+                HStack {
+                    Text("Selected items will download using the selected sync profiles as a failover pool.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Cancel") {
+                        dismiss()
+                    }
+                    .keyboardShortcut(.cancelAction)
+                    Button {
+                        coordinator.startSelectedRemoteDownload()
+                    } label: {
+                        Label("Download", systemImage: "arrow.down.circle.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .keyboardShortcut(.defaultAction)
+                    .disabled(selectedCount == 0 || coordinator.downloadLocalPath.isEmpty || coordinator.isRunning || coordinator.isRunningBandwidthTest)
+                }
+            }
+            .padding(20)
+        }
+    }
+}
+
+private struct RemoteDownloadItemRow: View {
+    let item: RemoteItem
+    let isSelected: Bool
+    let onToggle: () -> Void
+    let onOpen: () -> Void
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Button(action: onToggle) {
+                Image(systemName: isSelected ? "checkmark.square.fill" : "square")
+                    .foregroundStyle(isSelected ? .blue : .secondary)
+            }
+            .buttonStyle(.plain)
+            .help(isSelected ? "Remove from download" : "Add to download")
+
+            Image(systemName: item.isDirectory ? "folder.fill" : "doc.fill")
+                .foregroundStyle(item.isDirectory ? .blue : .secondary)
+                .frame(width: 22)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(item.name)
+                    .font(.callout.weight(.medium))
+                    .lineLimit(1)
+                HStack(spacing: 8) {
+                    Text(item.isDirectory ? "Folder" : TransferStatsParser.formatBytes(item.size ?? 0))
+                    if let modified = item.modified {
+                        Text("Modified \(modified.formatted(date: .abbreviated, time: .shortened))")
+                    }
+                }
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            }
+
+            Spacer()
+
+            if item.isDirectory {
+                Button(action: onOpen) {
+                    Label("Open", systemImage: "chevron.right")
+                        .labelStyle(.iconOnly)
+                }
+                .buttonStyle(.borderless)
+                .help("Open folder")
+            }
+        }
+        .contentShape(Rectangle())
+        .onTapGesture {
+            onToggle()
+        }
+    }
+}
+
+private struct DownloadTransferWindow: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        VStack(spacing: 0) {
+            HStack(spacing: 14) {
+                Image(systemName: "arrow.down.circle.fill")
+                    .font(.title2)
+                    .foregroundStyle(.blue)
+                    .frame(width: 42, height: 42)
+                    .background(Color.blue.opacity(0.13), in: RoundedRectangle(cornerRadius: 8))
+
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Download")
+                        .font(.title2.weight(.semibold))
+                    Text(coordinator.job.name)
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                        .truncationMode(.middle)
+                }
+
+                Spacer()
+
+                if coordinator.isRunning {
+                    if coordinator.isPaused {
+                        Button {
+                            coordinator.continuePausedRun()
+                        } label: {
+                            Label("Resume", systemImage: "play.fill")
+                        }
+                        .buttonStyle(.borderedProminent)
+                    } else {
+                        Button {
+                            coordinator.stop()
+                        } label: {
+                            Label("Pause", systemImage: "pause.fill")
+                        }
+                    }
+
+                    Button(role: .destructive) {
+                        coordinator.cancelJob()
+                    } label: {
+                        Label("Cancel", systemImage: "xmark.circle.fill")
+                    }
+                } else if coordinator.canResume {
+                    Button {
+                        coordinator.resume()
+                    } label: {
+                        Label("Resume", systemImage: "playpause.fill")
+                    }
+                    .buttonStyle(.borderedProminent)
+                }
+
+                Button {
+                    dismiss()
+                } label: {
+                    Image(systemName: "xmark.circle.fill")
+                }
+                .buttonStyle(.borderless)
+                .foregroundStyle(.secondary)
+            }
+            .padding(20)
+
+            Divider()
+
+            ScrollView {
+                VStack(alignment: .leading, spacing: 14) {
+                    HStack(spacing: 14) {
+                        LiveMetric(title: "Destination", value: coordinator.job.localPath, icon: "folder")
+                        LiveMetric(title: "Speed", value: TransferStatsParser.formatSpeed(coordinator.runs.last?.progress?.speedBytesPerSecond), icon: "speedometer")
+                        LiveMetric(title: "ETA", value: coordinator.runs.last?.progress?.eta ?? "-", icon: "timer")
+                    }
+
+                    if coordinator.runs.isEmpty {
+                        ContentUnavailableView("Preparing download", systemImage: "hourglass", description: Text(coordinator.statusMessage))
+                            .frame(maxWidth: .infinity, minHeight: 240)
+                    } else {
+                        ForEach(coordinator.runs) { run in
+                            RunRow(run: run)
+                        }
+                    }
+                }
+                .padding(20)
+            }
         }
     }
 }
