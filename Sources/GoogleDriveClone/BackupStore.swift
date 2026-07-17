@@ -9,6 +9,7 @@ struct GDriveVaultBackup: Codable, Sendable {
     var accountUsages: [AccountUsage]
     var googleChatSettings: GoogleChatSettings?
     var remoteControlSettings: RemoteControlSettings?
+    var organizationBranding: OrganizationBranding?
 }
 
 actor BackupStore {

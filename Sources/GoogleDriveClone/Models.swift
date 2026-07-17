@@ -332,7 +332,7 @@ struct ActiveFileTransfer: Identifiable, Equatable, Sendable {
 }
 
 enum AppVersion {
-    static let current = "1.3.5"
+    static let current = "1.3.6"
 }
 
 struct UpdateNotification: Identifiable, Equatable {
@@ -367,6 +367,47 @@ struct GoogleChatSettings: Codable, Equatable, Sendable {
         notifyFailed: true,
         notifyCompletedFiles: false,
         fileBatchSize: 10
+    )
+}
+
+struct OrganizationBranding: Codable, Equatable, Sendable {
+    var organizationName: String
+    var managedByName: String
+    var logoPath: String
+
+    var isConfigured: Bool {
+        !organizationName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        !managedByName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+        !logoPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+    }
+
+    var displayName: String {
+        let organization = organizationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let manager = managedByName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !organization.isEmpty { return organization }
+        if !manager.isEmpty { return manager }
+        return "Your organization"
+    }
+
+    var managedStatement: String {
+        let organization = organizationName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let manager = managedByName.trimmingCharacters(in: .whitespacesAndNewlines)
+        if !organization.isEmpty, !manager.isEmpty {
+            return "Licensed to \(organization) and managed by \(manager), on behalf of GDriveVault."
+        }
+        if !organization.isEmpty {
+            return "Licensed to \(organization), on behalf of GDriveVault."
+        }
+        if !manager.isEmpty {
+            return "Managed by \(manager), on behalf of GDriveVault."
+        }
+        return "Managed on behalf of GDriveVault."
+    }
+
+    static let empty = OrganizationBranding(
+        organizationName: "",
+        managedByName: "",
+        logoPath: ""
     )
 }
 

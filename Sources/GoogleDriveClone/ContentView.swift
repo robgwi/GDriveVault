@@ -232,6 +232,24 @@ struct ContentView: View {
             .padding(12)
             .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
 
+            if coordinator.organizationBranding.isConfigured {
+                HStack(spacing: 10) {
+                    BrandingLogoView(path: coordinator.organizationBranding.logoPath, size: 34)
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(coordinator.organizationBranding.displayName)
+                            .font(.callout.weight(.semibold))
+                            .lineLimit(1)
+                        Text(coordinator.organizationBranding.managedStatement)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .lineLimit(2)
+                    }
+                    Spacer()
+                }
+                .padding(12)
+                .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+            }
+
             VStack(alignment: .leading, spacing: 8) {
                 ForEach(AppPage.allCases) { page in
                     Button {
@@ -1741,6 +1759,124 @@ private struct BackupSettingsPanel: View {
     }
 }
 
+private struct OrganizationBrandingPanel: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            HStack(spacing: 14) {
+                BrandingLogoView(path: coordinator.organizationBranding.logoPath, size: 64)
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(coordinator.organizationBranding.isConfigured ? coordinator.organizationBranding.displayName : "No organization branding")
+                        .font(.title3.weight(.semibold))
+                    Text(coordinator.organizationBranding.isConfigured ? coordinator.organizationBranding.managedStatement : "Add an organization name and optional logo for managed deployments.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Grid(alignment: .leading, horizontalSpacing: 14, verticalSpacing: 12) {
+                GridRow {
+                    Text("Organization")
+                        .foregroundStyle(.secondary)
+                    TextField("Organization name", text: $coordinator.organizationBranding.organizationName)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                GridRow {
+                    Text("Managed by")
+                        .foregroundStyle(.secondary)
+                    TextField("Managed by name", text: $coordinator.organizationBranding.managedByName)
+                        .textFieldStyle(.roundedBorder)
+                }
+
+                GridRow {
+                    Text("Logo")
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Text(coordinator.organizationBranding.logoPath.isEmpty ? "No logo selected" : coordinator.organizationBranding.logoPath)
+                            .font(.caption.monospaced())
+                            .foregroundStyle(.secondary)
+                            .lineLimit(1)
+                            .truncationMode(.middle)
+                            .textSelection(.enabled)
+                        Spacer()
+                        Button {
+                            coordinator.chooseOrganizationLogo()
+                        } label: {
+                            Label("Choose", systemImage: "photo")
+                        }
+                        Button {
+                            coordinator.clearOrganizationLogo()
+                        } label: {
+                            Label("Clear", systemImage: "xmark.circle")
+                        }
+                        .disabled(coordinator.organizationBranding.logoPath.isEmpty)
+                    }
+                }
+            }
+
+            HStack {
+                Text("This does not replace GDriveVault branding. It adds a licensed-to / managed-by identity for organizations using the app.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Spacer()
+                Button {
+                    coordinator.organizationBranding = .empty
+                    coordinator.saveOrganizationBranding()
+                } label: {
+                    Label("Reset", systemImage: "arrow.counterclockwise")
+                }
+                Button {
+                    coordinator.saveOrganizationBranding()
+                } label: {
+                    Label("Save Branding", systemImage: "checkmark")
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(18)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.07))
+        }
+    }
+}
+
+private struct BrandingLogoView: View {
+    let path: String
+    let size: CGFloat
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(nsImage: image)
+                    .resizable()
+                    .scaledToFit()
+                    .padding(4)
+            } else {
+                Image(systemName: "building.2.crop.circle.fill")
+                    .font(.system(size: max(18, size * 0.52)))
+                    .foregroundStyle(.blue)
+            }
+        }
+        .frame(width: size, height: size)
+        .background(Color.blue.opacity(0.12), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(Color.primary.opacity(0.08))
+        }
+    }
+
+    private var image: NSImage? {
+        let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return nil }
+        return NSImage(contentsOfFile: trimmed)
+    }
+}
+
 private struct SettingsInfoRow: View {
     let label: String
     let value: String
@@ -1763,6 +1899,7 @@ private enum SettingsModal: String, Identifiable {
     case connection
     case accounts
     case backup
+    case branding
 
     var id: String { rawValue }
 
@@ -1771,6 +1908,7 @@ private enum SettingsModal: String, Identifiable {
         case .connection: "Connection Check"
         case .accounts: "Account Usage"
         case .backup: "Backup & Restore"
+        case .branding: "Organization Branding"
         }
     }
 
@@ -1779,6 +1917,7 @@ private enum SettingsModal: String, Identifiable {
         case .connection: "network"
         case .accounts: "gauge.with.dots.needle.50percent"
         case .backup: "archivebox"
+        case .branding: "building.2.crop.circle"
         }
     }
 }
@@ -1830,11 +1969,14 @@ private struct SettingsModalView: View {
             AccountTrackerPanel()
         case .backup:
             BackupSettingsPanel()
+        case .branding:
+            OrganizationBrandingPanel()
         }
     }
 }
 
 private struct WelcomeView: View {
+    @EnvironmentObject private var coordinator: SyncCoordinator
     @Environment(\.dismiss) private var dismiss
     @Binding var isWelcomeShown: Bool
 
@@ -1876,6 +2018,22 @@ private struct WelcomeView: View {
                     Text("Built for users who need more than the standard Google Drive desktop application, GDriveVault delivers enhanced performance, greater flexibility, and advanced file management tools designed to make working with cloud storage faster and easier.")
                         .foregroundStyle(.secondary)
                         .fixedSize(horizontal: false, vertical: true)
+
+                    if coordinator.organizationBranding.isConfigured {
+                        HStack(spacing: 12) {
+                            BrandingLogoView(path: coordinator.organizationBranding.logoPath, size: 48)
+                            VStack(alignment: .leading, spacing: 3) {
+                                Text(coordinator.organizationBranding.displayName)
+                                    .font(.headline)
+                                Text(coordinator.organizationBranding.managedStatement)
+                                    .font(.callout)
+                                    .foregroundStyle(.secondary)
+                            }
+                            Spacer()
+                        }
+                        .padding(14)
+                        .background(Color(nsColor: .controlBackgroundColor), in: RoundedRectangle(cornerRadius: 8))
+                    }
 
                     VStack(alignment: .leading, spacing: 12) {
                         Text("Key Features")
@@ -2169,6 +2327,16 @@ private struct AppSettingsView: View {
                             isDisabled: coordinator.isRunning || coordinator.isUploadingSettingsBackup
                         ) {
                             activeModal = .backup
+                        }
+                    }
+
+                    SettingsGroup(title: "Branding") {
+                        SettingsActionRow(
+                            icon: "building.2.crop.circle",
+                            title: "Organization Branding",
+                            subtitle: coordinator.organizationBranding.isConfigured ? coordinator.organizationBranding.managedStatement : "Add a licensed-to or managed-by organization logo"
+                        ) {
+                            activeModal = .branding
                         }
                     }
 
@@ -2973,6 +3141,19 @@ private struct RemoteControlSettingsView: View {
                     }
                     Label("Remote control is always enabled for licensed agents.", systemImage: "antenna.radiowaves.left.and.right")
                         .foregroundStyle(.secondary)
+
+                    if coordinator.organizationBranding.isConfigured {
+                        HStack(spacing: 10) {
+                            BrandingLogoView(path: coordinator.organizationBranding.logoPath, size: 34)
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text(coordinator.organizationBranding.displayName)
+                                    .font(.callout.weight(.semibold))
+                                Text(coordinator.organizationBranding.managedStatement)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
 
                     HStack {
                         Label(coordinator.remoteControlSettings.isRegistered ? "Registered" : "Not registered", systemImage: coordinator.remoteControlSettings.isRegistered ? "checkmark.seal.fill" : "exclamationmark.triangle")

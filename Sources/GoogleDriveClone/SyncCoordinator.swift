@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import UniformTypeIdentifiers
 
 private enum GoogleChatEvent {
     case started(job: SyncJob, destinations: [String])
@@ -91,6 +92,7 @@ final class SyncCoordinator: ObservableObject {
     @Published var isChatSettingsPresented = false
     @Published var googleChatSettings = GoogleChatSettings.disabled
     @Published var isTestingGoogleChat = false
+    @Published var organizationBranding = OrganizationBranding.empty
     @Published var isRemoteControlSettingsPresented = false
     @Published var remoteControlSettings = RemoteControlSettings.disabled
     @Published var isRegisteringRemoteControl = false
@@ -118,6 +120,7 @@ final class SyncCoordinator: ObservableObject {
     private let logStore = RunLogStore()
     private let updateChecker = UpdateChecker()
     private let chatSettingsStore = GoogleChatSettingsStore()
+    private let organizationBrandingStore = OrganizationBrandingStore()
     private let googleChat = GoogleChatService()
     private let remoteControlSettingsStore = RemoteControlSettingsStore()
     private let remoteControlService = RemoteControlService()
@@ -147,6 +150,7 @@ final class SyncCoordinator: ObservableObject {
         loadSavedJobs()
         loadInterruptedRun()
         loadGoogleChatSettings()
+        loadOrganizationBranding()
         loadRemoteControlSettings()
         loadLatestBandwidthTest()
     }
@@ -496,6 +500,69 @@ final class SyncCoordinator: ObservableObject {
                 }
             }
         }
+    }
+
+    func loadOrganizationBranding() {
+        Task {
+            let loaded = await organizationBrandingStore.load()
+            await MainActor.run {
+                organizationBranding = loaded
+            }
+        }
+    }
+
+    func saveOrganizationBranding() {
+        let branding = organizationBranding
+        Task {
+            await organizationBrandingStore.save(branding)
+            await MainActor.run {
+                statusMessage = branding.isConfigured ? "Saved organization branding." : "Organization branding cleared."
+            }
+        }
+    }
+
+    func chooseOrganizationLogo() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png, .jpeg, .tiff, .gif, .heic, .webP]
+        panel.canChooseDirectories = false
+        panel.canChooseFiles = true
+        panel.allowsMultipleSelection = false
+        panel.prompt = "Use Logo"
+        panel.message = "Choose an organization logo to show in GDriveVault."
+
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+
+        do {
+            let logoURL = try copyBrandingLogo(from: url)
+            organizationBranding.logoPath = logoURL.path
+            saveOrganizationBranding()
+        } catch {
+            statusMessage = "Could not save organization logo: \(error.localizedDescription)"
+        }
+    }
+
+    func clearOrganizationLogo() {
+        organizationBranding.logoPath = ""
+        saveOrganizationBranding()
+    }
+
+    private func copyBrandingLogo(from sourceURL: URL) throws -> URL {
+        let directory = try FileManager.default.url(
+            for: .applicationSupportDirectory,
+            in: .userDomainMask,
+            appropriateFor: nil,
+            create: true
+        )
+        .appendingPathComponent("GDriveVault/Branding", isDirectory: true)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+
+        let ext = sourceURL.pathExtension.isEmpty ? "png" : sourceURL.pathExtension
+        let destination = directory.appendingPathComponent("organization-logo.\(ext)")
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        try FileManager.default.copyItem(at: sourceURL, to: destination)
+        return destination
     }
 
     func loadRemoteControlSettings() {
@@ -853,6 +920,7 @@ final class SyncCoordinator: ObservableObject {
         await jobStore.save(backup.syncJobs)
         await usageStore.save(backup.accountUsages)
         await chatSettingsStore.save(backup.googleChatSettings ?? .disabled)
+        await organizationBrandingStore.save(backup.organizationBranding ?? .empty)
         let restoredRemoteSettings = (backup.remoteControlSettings ?? .disabled).lockedToProductionServer
         await remoteControlSettingsStore.save(restoredRemoteSettings)
 
@@ -860,6 +928,7 @@ final class SyncCoordinator: ObservableObject {
             savedJobs = backup.syncJobs.sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
             accountUsages = backup.accountUsages
             googleChatSettings = backup.googleChatSettings ?? .disabled
+            organizationBranding = backup.organizationBranding ?? .empty
             remoteControlSettings = restoredRemoteSettings
             didUploadSettingsBackupForCurrentConnection = false
             startRemoteControlLoopIfNeeded()
@@ -884,7 +953,8 @@ final class SyncCoordinator: ObservableObject {
             syncJobs: savedJobs,
             accountUsages: accountUsages,
             googleChatSettings: googleChatSettings,
-            remoteControlSettings: remoteControlSettings
+            remoteControlSettings: remoteControlSettings,
+            organizationBranding: organizationBranding
         )
     }
 
